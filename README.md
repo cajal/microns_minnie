@@ -1,2 +1,2 @@
-# microns-minnie
-repository for minnie mouse data
+# microns-minnie-nda
+neural data access for minnie mouse data
