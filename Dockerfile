@@ -3,7 +3,7 @@ ARG BASE_IMAGE=at-docker:5000/zhuokund/pytorch
 # Perform multistage build to pull private repo without leaving behind
 # private information (e.g. SSH key, Git token)
 FROM ${BASE_IMAGE} as base
-ARG DEV_SOURCE=cajal
+ARG DEV_SOURCE=spapa013
 
 # GitHub username and GitHub Personal Access Token must be specified
 ARG GITHUB_USER
@@ -14,7 +14,7 @@ WORKDIR /src
 RUN git config --global credential.helper store &&\
     echo https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com >> ~/.git-credentials
 
-RUN git clone https://github.com/cajal/utils.git
+RUN git clone https://github.com/${DEV_SOURCE}/utils.git
 
 # Building the second stage
 FROM ${BASE_IMAGE}
