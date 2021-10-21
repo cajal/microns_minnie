@@ -5,7 +5,7 @@ from os import path
 here = path.abspath(path.dirname(__file__))
 
 setup(
-    name='minnie_nda',
+    name='microns-nda',
     version='0.0.1',
     description='Neural data access for MICrONS',
     author='Stelios Papadopoulos, Zhuokun Ding',
