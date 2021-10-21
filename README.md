@@ -1,2 +1,2 @@
-# microns-minnie-nda
-neural data access for minnie
+# microns-nda
+neural data access for microns
