@@ -1,22 +1,20 @@
   
 version: '3.4'
 x-build: &build
-  context: ../../../
+  context: ../../
   dockerfile: Dockerfile
   
 x-shared: &common
   ipc: host
   build:
-    context: ../../../
+    context: ../../
     dockerfile: Dockerfile
     args:
       - GITHUB_USER=${GITHUB_USER}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - DEV_SOURCE=${DEV_SOURCE}
   volumes:
-    - ../../../:/src/microns-nda
-    - ${NOTEBOOK_PATH}:/notebooks
-    - ${DATA_PATH}:/data
+    - ../../:/src/microns-nda
     - /mnt:/mnt
   env_file:
     - .env
@@ -26,7 +24,7 @@ services:
     <<: *common
     ports:
         - "${JUPYTER_HOST:-0.0.0.0}:${JUPYTER_PORT_CONTAINER:-8888}:8888"
-    entrypoint: /src/microns-nda/deploy/personal/zhuokun/notebook.sh
+    entrypoint: /src/microns-nda/deploy/notebook.sh
   bin:
     <<: *common
     entrypoint: /bin/bash
