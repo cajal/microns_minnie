@@ -9,10 +9,6 @@ x-shared: &common
   build:
     context: ../../
     dockerfile: Dockerfile
-    args:
-      - GITHUB_USER=${GITHUB_USER}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - DEV_SOURCE=${DEV_SOURCE}
   volumes:
     - ../../:/src/microns-nda
     - /mnt:/mnt
