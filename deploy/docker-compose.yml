@@ -1,16 +1,16 @@
   
 version: '3.4'
 x-build: &build
-  context: ../../
+  context: ../
   dockerfile: Dockerfile
   
 x-shared: &common
   ipc: host
   build:
-    context: ../../
+    context: ../
     dockerfile: Dockerfile
   volumes:
-    - ../../:/src/microns-nda
+    - ../:/src/microns-nda
     - /mnt:/mnt
   env_file:
     - .env

@@ -1,3 +1,9 @@
+# Personal deploy folders
+/personal-deploy
+/personal_deploy
+/microns-personal-deploy
+/microns_personal_deploy
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
