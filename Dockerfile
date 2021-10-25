@@ -1,30 +1,71 @@
-ARG BASE_IMAGE=at-docker:5000/zhuokund/pytorch
+FROM nvidia/cuda:11.0-cudnn8-devel-ubuntu18.04
+LABEL mantainer="Zhuokun Ding <zhuokund@bcm.edu>, Stelios Papadopoulos <spapadop@bcm.edu>"
+# Deal with pesky Python 3 encoding issue
+ENV LANG C.UTF-8
+ENV DEBIAN_FRONTEND noninteractive
 
-# Perform multistage build to pull private repo without leaving behind
-# private information (e.g. SSH key, Git token)
-FROM ${BASE_IMAGE} as base
-ARG DEV_SOURCE=spapa013
+# Install essential Ubuntu packages
+# and upgrade pip
+RUN apt-get update &&\
+    apt-get install -y software-properties-common \
+                       build-essential \
+                       git \
+                       wget \
+                       vim \
+                       curl \
+                       zip \
+                       zlib1g-dev \
+                       unzip \
+                       pkg-config \
+                       libblas-dev \
+                       liblapack-dev \
+                       python3-tk \
+                       python3-wheel \
+                       graphviz \
+                       libhdf5-dev \
+                       python3.8 \
+                       python3.8-dev \
+                       python3.8-distutils \
+                       swig &&\
+    apt-get clean &&\
+    ln -s /usr/bin/python3.8 /usr/local/bin/python &&\
+    ln -s /usr/bin/python3.8 /usr/local/bin/python3 &&\
+    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py &&\
+    python3 get-pip.py &&\
+    rm get-pip.py &&\
+    # best practice to keep the Docker image lean
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# GitHub username and GitHub Personal Access Token must be specified
-ARG GITHUB_USER
-ARG GITHUB_TOKEN
+# Install Node.js for rebuilding jupyter lab
+RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash -
+RUN apt-get install -y nodejs
 
 WORKDIR /src
-# Use git credential-store to specify username and pass to use for pulling repo
-RUN git config --global credential.helper store &&\
-    echo https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com >> ~/.git-credentials
 
-RUN git clone https://github.com/${DEV_SOURCE}/utils.git
+# Install essential Python packages
+RUN python3 -m pip --no-cache-dir install \
+         pytest \
+         pytest-cov \
+         numpy \
+         matplotlib \
+         scipy \
+         pandas \
+         jupyterlab \
+         ipywidgets \
+         ipympl \
+         scikit-learn \
+         scikit-image \
+         seaborn \
+         graphviz \
+         h5py
 
-# Building the second stage
-FROM ${BASE_IMAGE}
-LABEL mantainer="Zhuokun Ding <zhuokund@bcm.edu>"
-# copy everything found in /data over
-# and then install them
-COPY --from=base /src /src
+RUN python3 -m pip --no-cache-dir install git+https://github.com/spapa013/datajoint-python.git
 
-RUN pip install /src/utils
-RUN pip install pycircstat nose tables
+# Add profiling library support
+ENV LD_LIBRARY_PATH /usr/local/cuda/extras/CUPTI/lib64:${LD_LIBRARY_PATH}
+
+# Export port for Jupyter Notebook
+EXPOSE 8888
 
 # copy this project and install
 COPY . /src/microns-nda
