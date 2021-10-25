@@ -1,5 +1,5 @@
 import datajoint as dj
-from utils.datajoint import datajoint_plus as djp
+from datajoint import datajoint_plus as djp
 
 import numpy as np
 import pandas as pd
