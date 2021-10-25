@@ -27,5 +27,5 @@ RUN pip install /src/utils
 RUN pip install pycircstat nose tables
 
 # copy this project and install
-COPY . /src/minnie-nda
-RUN pip install -e /src/minnie-nda
+COPY . /src/microns-nda
+RUN pip install -e /src/microns-nda/python
