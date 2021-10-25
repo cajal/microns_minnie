@@ -13,7 +13,7 @@ reso = dj.create_virtual_module('reso', 'pipeline_reso')
 stack = dj.create_virtual_module('stack', 'pipeline_stack')
 
 @schema
-class Animal(dj.Lookup):
+class Animal(djp.Lookup):
     definition = """
     animal_id            : int                          # id number 
     """
@@ -614,36 +614,6 @@ class StackUnit(djp.Lookup):
         source &= Registration.proj(registration_method='NULL').proj() & 'segmentation_method=6'
         source = (source * Stack.Corrected).proj('motor_x', 'motor_y', 'motor_z', registration_method='2', stack_x = 'round(motor_x - x + um_width/2, 2)', stack_y = 'round(motor_y - y + um_height/2, 2)', stack_z = 'round(motor_z - z + um_depth/2, 2)')
         cls.insert(source, skip_duplicates=True, ignore_extra_fields=True)
-
-
-# @schema
-# class SpikeMethod(djp.Lookup):
-#     definition = """
-#     spike_method         : tinyint                      # spike inference method
-#     ---
-#     name                 : varchar(16)                  # short name to identify the spike inference method
-#     details              : varchar(255)                 # more details
-#     """
-    
-#     contents = [
-#         [5, 'nmf', 'noise constrained deconvolution from Pnevmatikakis et al. (2016)']
-#     ]
-
-
-# @schema
-# class Oracle(djp.Lookup):
-#     definition = """
-#     # oracle scores from pipeline_tune.MovieOracle.Total (Note: pearson renamed to oracle)
-#     -> Unit
-#     -> SpikeMethod
-#     ---
-#     trials               : int                          # number of trials used
-#     oracle               : float                        # per unit oracle pearson correlation over all movies
-#     """
-
-#     @classmethod
-#     def fill(cls):
-#         cls.insert(tune.MovieOracle.Total.proj(..., scan_session='session', oracle='pearson') & Unit, skip_duplicates=True, ignore_extra_fields=True)
 
 
 @schema
