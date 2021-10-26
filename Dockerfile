@@ -57,7 +57,7 @@ RUN python3 -m pip --no-cache-dir install \
          scikit-image \
          seaborn \
          graphviz \
-         h5py
+         h5py 
 
 RUN python3 -m pip --no-cache-dir install git+https://github.com/spapa013/datajoint-python.git
 
