@@ -7,11 +7,10 @@ import pandas as pd
 import microns_nda_config as config
 schema_name = 'microns_minnie_nda'
 
-config.register_adapters(schema_name)
+config.register_adapters(schema_name, context=locals())
 config.register_externals(schema_name)
 
 schema = dj.schema(schema_name)
-schema.spawn_missing_classes()
 
 
 @schema
