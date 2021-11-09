@@ -37,8 +37,8 @@ def create_vm(schema_name:str):
     """
     Creates a virtual module after registering the external stores, and includes the adapter objects in the vm.
     """
-    schema = config_mapping[SCHEMAS(schema_name)]
-    return config_utils.create_vm(schema.value, external_stores=config_mapping[schema]["externals"], adapter_objects=config_mapping[schema.name]["adapters"])
+    schema = SCHEMAS(schema_name)
+    return config_utils.create_vm(schema.value, external_stores=config_mapping[schema]["externals"], adapter_objects=config_mapping[schema]["adapters"])
 
 class SCHEMAS(Enum):
     MINNIE_NDA = 'microns_minnie_nda'
