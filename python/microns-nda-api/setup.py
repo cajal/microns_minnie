@@ -8,9 +8,9 @@ with open(path.join(here, '..', 'version.py')) as f:
     exec(f.read())
 
 setup(
-    name="microns-nda-config",
+    name="microns-nda-api",
     version=__version__,
-    description="configuration for microns-nda",
+    description="api for microns-nda",
     author="Christos Papadopoulos, Stelios Papadopoulos",
     packages=find_packages()
 )
