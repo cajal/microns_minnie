@@ -4,13 +4,15 @@ from datajoint import datajoint_plus as djp
 import numpy as np
 import pandas as pd
 
-schema = dj.schema('microns_minnie_nda', create_tables=True)
-schema.spawn_missing_classes()
+from microns_nda_api import config
+schema_obj = config.SCHEMAS.MINNIE_NDA
 
-experiment = dj.create_virtual_module('experiment', 'pipeline_experiment')
-meso = dj.create_virtual_module('meso', 'pipeline_meso')
-reso = dj.create_virtual_module('reso', 'pipeline_reso')
-stack = dj.create_virtual_module('stack', 'pipeline_stack')
+config.register_adapters(schema_obj, context=locals())
+config.register_externals(schema_obj)
+
+schema = dj.schema(schema_obj.value)
+# schema.spawn_missing_classes()
+
 
 @schema
 class Animal(djp.Lookup):
@@ -19,6 +21,7 @@ class Animal(djp.Lookup):
     """
 
     contents = [[17797]]
+
 
 @schema
 class Scan(djp.Lookup):
@@ -93,6 +96,9 @@ class Scan(djp.Lookup):
     
     @classmethod
     def fill(cls):
+        experiment = dj.create_virtual_module('experiment', 'pipeline_experiment')
+        reso = dj.create_virtual_module('reso', 'pipeline_reso')
+        meso = dj.create_virtual_module('meso', 'pipeline_meso')
         cls.insert(experiment.Scan.proj(..., scan_session='session') & Animal, ignore_extra_fields=True, skip_duplicates=True)
         cls.Experiment.insert(experiment.Scan.proj(..., scan_session='session') & Animal, skip_duplicates=True)
         cls.Reso.insert(reso.ScanInfo.proj(..., scan_session='session') & Animal, skip_duplicates=True)
@@ -149,55 +155,11 @@ class Stack(djp.Lookup):
     
     @classmethod
     def fill(cls):
+        experiment = dj.create_virtual_module('experiment', 'pipeline_experiment')
+        stack = dj.create_virtual_module('stack', 'pipeline_stack')
         cls.insert(experiment.Stack.proj(..., stack_session='session') & Animal, ignore_extra_fields=True, skip_duplicates=True)
         cls.Experiment.insert(experiment.Stack.proj(..., stack_session='session') & Animal, skip_duplicates=True)
         cls.Corrected.insert((stack.StackInfo * stack.CorrectedStack).proj(..., stack_session='session') & Animal, skip_duplicates=True)
-
-
-# @schema
-# class ScanSet(djp.HashTable):
-#     hash_name = 'scan_set'
-#     hashed_attrs = Scan.heading.primary_key
-#     hash_group = True
-#     definition = """
-#     scan_set     : varchar(12)          #  hash name
-#     ---
-#     name         : varchar(48)          #  name of subset
-#     description  : varchar(450)         #  description of subset
-#     timestamp=CURRENT_TIMESTAMP : timestamp
-#     """
-    
-#     class ScanInclude(djp.Part):
-#         definition = """
-#         -> master
-#         -> Scan
-#         """
-    
-#     class ScanExclude(djp.Part):
-#         definition = """
-#         -> master
-#         -> Scan
-#         """
-
-
-# @schema
-# class StackSet(djp.HashTable):
-#     hash_name = 'stack_set'
-#     hashed_attrs = Stack.heading.primary_key
-#     hash_group = True
-#     definition = """
-#     stack_set     : varchar(12)          #  hash name
-#     ---
-#     name         : varchar(48)          #  name of subset
-#     description  : varchar(450)         #  description of subset
-#     timestamp=CURRENT_TIMESTAMP : timestamp
-#     """
-
-#     class Coregistered(djp.Part):
-#         definition = """
-#         -> master
-#         -> Stack
-#         """
 
 
 @schema
@@ -241,6 +203,8 @@ class Field(djp.Lookup):
     
     @classmethod
     def fill(cls):
+        reso = dj.create_virtual_module('reso', 'pipeline_reso')
+        meso = dj.create_virtual_module('meso', 'pipeline_meso')
         for pipe, part in zip([reso, meso], [cls.Reso, cls.Meso]):
             cls.insert(pipe.ScanInfo.Field.proj(scan_session='session') & Scan, ignore_extra_fields=True, skip_duplicates=True)
             part.insert(pipe.ScanInfo.Field.proj(..., scan_session='session') & Scan, skip_duplicates=True)
@@ -280,6 +244,8 @@ class SummaryImages(djp.Lookup):
     
     @classmethod
     def fill(cls):
+        reso = dj.create_virtual_module('reso', 'pipeline_reso')
+        meso = dj.create_virtual_module('meso', 'pipeline_meso')
         for pipe in [reso, meso]:
             cls.insert(pipe.SummaryImages.proj(scan_session='session', scan_channel='channel') & Field, skip_duplicates=True, ignore_extra_fields=True)
             cls.Average.insert(pipe.SummaryImages.Average.proj(..., scan_session='session', scan_channel='channel') & Field, skip_duplicates=True, ignore_extra_fields=True)
@@ -339,6 +305,8 @@ class Segmentation(djp.Lookup):
     
     @classmethod
     def fill(cls):
+        reso = dj.create_virtual_module('reso', 'pipeline_reso')
+        meso = dj.create_virtual_module('meso', 'pipeline_meso')
         for segmentation_method in [6]:
             for pipe in [reso, meso]:
                 cls.insert(pipe.Segmentation.proj(..., scan_session='session', scan_channel='channel') & Field & {'segmentation_method': segmentation_method}, skip_duplicates=True, ignore_extra_fields=True)
@@ -383,6 +351,8 @@ class MaskClassification(djp.Lookup):
     
     @classmethod
     def fill(cls):
+        reso = dj.create_virtual_module('reso', 'pipeline_reso')
+        meso = dj.create_virtual_module('meso', 'pipeline_meso')
         for mask_classification_method in [2]:
             for pipe in [reso, meso]:
                 cls.insert(pipe.MaskClassification.proj(..., scan_session='session', mask_classification_method='classification_method') & Segmentation & {'mask_classification_method': mask_classification_method}, skip_duplicates=True, ignore_extra_fields=True)
@@ -408,6 +378,8 @@ class Unit(djp.Lookup):
 
     @classmethod
     def fill(cls):
+        reso = dj.create_virtual_module('reso', 'pipeline_reso')
+        meso = dj.create_virtual_module('meso', 'pipeline_meso')
         for pipe in [reso, meso]:
             cls.insert((pipe.ScanSet.Unit * pipe.ScanSet.UnitInfo).proj(..., scan_session='session') & Scan & SegmentationMethod, skip_duplicates=True, ignore_extra_fields=True)
     
@@ -491,7 +463,8 @@ class Registration(djp.Lookup):
         """
         
     @classmethod
-    def fill(cls):       
+    def fill(cls):
+        stack = dj.create_virtual_module('stack', 'pipeline_stack')       
         cls.insert((stack.Registration & Stack.Corrected).proj(registration_method='NULL').proj() * RegistrationMethod, skip_duplicates=True, ignore_extra_fields=True)
         cls.Rigid.insert(stack.Registration.Rigid.proj(..., registration_method='1')  & Stack.Corrected, skip_duplicates=True, ignore_extra_fields=True)
         cls.Affine.insert(stack.Registration.Affine.proj(..., registration_method='2') & Stack.Corrected, skip_duplicates=True, ignore_extra_fields=True)
@@ -539,6 +512,7 @@ class Area(djp.Lookup):
         
     @classmethod
     def fill(cls):
+        stack = dj.create_virtual_module('stack', 'pipeline_stack')
         source = stack.Area.Mask & Stack.Corrected & Scan & 'registration_method=5'
         to_insert = source.proj(..., reg_method='registration_method').proj(..., reg_method='NULL').proj(..., registration_method='2')
         cls.insert(to_insert, skip_duplicates=True, ignore_extra_fields=True)
@@ -587,6 +561,7 @@ class AreaMembership(djp.Lookup):
 
     @classmethod
     def fill(cls):
+        meso = dj.create_virtual_module('meso', 'pipeline_meso')
         source = meso.AreaMembership.UnitInfo.proj(..., scan_session='session') & Animal
         source &= Registration.proj(registration_method='NULL').proj()
         source = source.proj(..., registration_method='2') & Unit
@@ -610,6 +585,7 @@ class StackUnit(djp.Lookup):
     
     @classmethod
     def fill(cls):
+        meso = dj.create_virtual_module('meso', 'pipeline_meso')
         source = meso.StackCoordinates.UnitInfo.proj(..., scan_session='session', motor_x='stack_x', motor_y='stack_y', motor_z='stack_z') & Animal
         source &= Registration.proj(registration_method='NULL').proj() & 'segmentation_method=6'
         source = (source * Stack.Corrected).proj('motor_x', 'motor_y', 'motor_z', registration_method='2', stack_x = 'round(motor_x - x + um_width/2, 2)', stack_y = 'round(motor_y - y + um_height/2, 2)', stack_z = 'round(motor_z - z + um_depth/2, 2)')
