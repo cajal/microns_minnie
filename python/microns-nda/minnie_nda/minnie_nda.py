@@ -4,13 +4,13 @@ from datajoint import datajoint_plus as djp
 import numpy as np
 import pandas as pd
 
-import microns_nda_config as config
-schema_name = 'microns_minnie_nda'
+from microns_nda_api import config
+schema_obj = config.SCHEMAS.MINNIE_NDA
 
-config.register_adapters(schema_name, context=locals())
-config.register_externals(schema_name)
+config.register_adapters(schema_obj, context=locals())
+config.register_externals(schema_obj)
 
-schema = dj.schema(schema_name)
+schema = dj.schema(schema_obj.value)
 # schema.spawn_missing_classes()
 
 
