@@ -20,6 +20,7 @@ services:
     ports:
         - "${JUPYTER_HOST:-0.0.0.0}:${JUPYTER_PORT_CONTAINER:-8888}:8888"
     entrypoint: /src/microns-nda/deploy/notebook.sh
+    working_dir: /src
   bin:
     <<: *common
     entrypoint: /bin/bash
