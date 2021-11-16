@@ -12,5 +12,6 @@ setup(
     version=__version__,
     description="api for microns-nda",
     author="Christos Papadopoulos, Stelios Papadopoulos",
-    packages=find_packages()
+    packages=find_packages(),
+    install_requires=['microns-utils@git+https://github.com/cajal/microns-utils.git']
 )
