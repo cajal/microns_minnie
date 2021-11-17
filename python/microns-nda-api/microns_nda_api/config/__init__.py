@@ -26,7 +26,7 @@ def register_externals(schema_name:str):
     external_stores = config_mapping[SCHEMAS(schema_name)]["externals"]
     
     if external_stores is not None:
-        return config_utils.register_externals(external_stores)
+        config_utils.register_externals(external_stores)
 
 
 def register_adapters(schema_name:str, context=None):
@@ -36,7 +36,7 @@ def register_adapters(schema_name:str, context=None):
     adapter_objects = config_mapping[SCHEMAS(schema_name)]["adapters"]
     
     if adapter_objects is not None:
-        return config_utils.register_adapters(adapter_objects, context=context)
+        config_utils.register_adapters(adapter_objects, context=context)
 
 
 def create_vm(schema_name:str):
