@@ -19,5 +19,5 @@ setup(
     author='Stelios Papadopoulos, Zhuokun Ding',
     author_email='spapadop@bcm.edu, zhuokund@bcm.edu',
     packages=find_packages(exclude=[]),
-    install_requires=['numpy', 'scipy', 'tqdm', 'pandas', 'seaborn', 'matplotlib', api]
+    install_requires=['numpy', 'scipy', 'tqdm', 'pandas', 'seaborn', 'matplotlib', api, 'microns-utils@git+https://github.com/cajal/microns-utils.git']
 )

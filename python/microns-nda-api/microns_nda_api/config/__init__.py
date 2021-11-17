@@ -23,14 +23,20 @@ def register_externals(schema_name:str):
     """
     Registers the external stores for a schema_name in this module.
     """
-    return config_utils.register_externals(config_mapping[SCHEMAS(schema_name)]["externals"])
+    external_stores = config_mapping[SCHEMAS(schema_name)]["externals"]
+    
+    if external_stores is not None:
+        config_utils.register_externals(external_stores)
 
 
 def register_adapters(schema_name:str, context=None):
     """
     Imports the adapters for a schema_name into the global namespace.
     """
-    return config_utils.register_adapters(config_mapping[SCHEMAS(schema_name)]["adapters"], context=context)
+    adapter_objects = config_mapping[SCHEMAS(schema_name)]["adapters"]
+    
+    if adapter_objects is not None:
+        config_utils.register_adapters(adapter_objects, context=context)
 
 
 def create_vm(schema_name:str):
