@@ -1,0 +1,3 @@
+"""
+Externals for DataJoint tables.
+"""
