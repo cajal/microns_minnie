@@ -1,0 +1,3 @@
+"""
+Adapters for DataJoint tables.
+"""

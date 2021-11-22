@@ -13,7 +13,6 @@ config.register_externals(schema_obj)
 schema = dj.schema(schema_obj.value)
 # schema.spawn_missing_classes()
 
-
 @schema
 class Animal(djp.Lookup):
     definition = """
@@ -21,7 +20,6 @@ class Animal(djp.Lookup):
     """
 
     contents = [[17797]]
-
 
 @schema
 class Scan(djp.Lookup):
