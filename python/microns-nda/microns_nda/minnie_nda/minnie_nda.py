@@ -11,7 +11,9 @@ config.register_adapters(schema_obj, context=locals())
 config.register_externals(schema_obj)
 
 schema = dj.schema(schema_obj.value)
-# schema.spawn_missing_classes()
+schema.spawn_missing_classes()
+schema.connection.dependencies.load()
+
 
 @schema
 class Animal(djp.Lookup):
