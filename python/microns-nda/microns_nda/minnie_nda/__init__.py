@@ -1,5 +1,5 @@
-from microns_nda_api import config
-from . import minnie_nda, minnie_function
+from microns_utils.config_utils import reassign_master_attribute
+from . import minnie_function, minnie_nda
 
-config.register_bases(config.SCHEMAS.MINNIE_NDA, minnie_nda)
-config.register_bases(config.SCHEMAS.MINNIE_FUNCTION, minnie_function)
+reassign_master_attribute(minnie_nda)
+reassign_master_attribute(minnie_function)
