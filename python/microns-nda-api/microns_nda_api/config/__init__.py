@@ -12,7 +12,8 @@ except:
     traceback.print_exc()
     raise ImportError('DataJoint package not found.')
 from microns_utils import config_utils
-    
+
+
 config_utils.enable_datajoint_flags()
 
 

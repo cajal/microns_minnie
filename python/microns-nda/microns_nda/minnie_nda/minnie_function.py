@@ -3,7 +3,6 @@ import datajoint as dj
 from datajoint.datajoint_plus import classproperty
 from microns_nda_api.schemas import minnie_function, minnie_nda
 
-
 # Utility tables
 class ScanSet(minnie_function.ScanSet):
     class Member(minnie_function.ScanSet.Member):
