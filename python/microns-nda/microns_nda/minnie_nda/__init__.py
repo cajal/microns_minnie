@@ -1,5 +1,5 @@
-from microns_utils.config_utils import reassign_master_attribute
+import datajoint.datajoint_plus as djp
 from . import minnie_function, minnie_nda
 
-reassign_master_attribute(minnie_nda)
-reassign_master_attribute(minnie_function)
+djp.reassign_master_attribute(minnie_nda)
+djp.reassign_master_attribute(minnie_function)
