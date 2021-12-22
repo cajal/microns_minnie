@@ -11,4 +11,3 @@ __version__ = version_utils.check_package_version(
 )
 
 check_latest_version_from_github = version_utils.latest_github_version_checker(owner='cajal', repo='microns-nda')
-
