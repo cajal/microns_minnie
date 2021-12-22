@@ -11,7 +11,6 @@ config.register_externals(schema_obj)
 
 schema = dj.schema(schema_obj.value, create_schema=True)
 
-
 # Utility tables
 @schema
 class ScanSet(djp.Lookup):
@@ -246,4 +245,5 @@ class OrientationScanSet(djp.Lookup):
         )
 
 
+schema.spawn_missing_classes()
 schema.connection.dependencies.load()
