@@ -158,18 +158,49 @@ class Orientation(djp.Lookup):
     timestamp=CURRENT_TIMESTAMP : timestamp
     """
 
+    def part_table(self, key=None):
+        key = self.fetch("KEY") if key is None else (self & key).fetch("KEY")
+        part = [
+            self.restrict_one_part_with_hash(k[self.hash_name]).__class__ for k in key
+        ]
+        part = set(part)
+        assert len(part) == 1
+        part = part.pop()
+        part_key = (part & key).fetch()
+        return part & part_key
+
+    def _pref_ori(self, key=None, unit_key=None):
+        key = self.fetch("KEY") if key is None else (self & key).fetch("KEY")
+        unit_key = {} if unit_key is None else unit_key
+        return (self & key).part_table()._pref_ori(unit_key=unit_key)
+
+    def _tunability(self, key=None, unit_key=None):
+        key = self.fetch("KEY") if key is None else (self & key).fetch("KEY")
+        unit_key = {} if unit_key is None else unit_key
+        return (self & key).part_table()._tunability(unit_key=unit_key)
 
     class DV11521GD(djp.Part):
         _source = 'OrientationDV11521GD'
+        source = eval(_source)
         enable_hashing = True
         hash_name = "orientation_hash"
-        hashed_attrs = eval(_source).primary_key
+        hashed_attrs = source.primary_key
         definition = """
         #
         -> master
         ---
         -> OrientationDV11521GD
         """
+
+        def _pref_ori(self, key=None, unit_key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            unit_key = {} if unit_key is None else unit_key
+            return (self.source & key).pref_ori(unit_key=unit_key)
+
+        def _tunability(self, key=None, unit_key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            unit_key = {} if unit_key is None else unit_key
+            return (self.source & key).tunability(unit_key=unit_key)
 
 
 @schema
