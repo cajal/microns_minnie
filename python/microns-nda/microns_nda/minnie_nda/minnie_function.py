@@ -3,11 +3,10 @@ import datajoint as dj
 from datajoint.datajoint_plus import classproperty
 from microns_nda_api.schemas import minnie_function, minnie_nda
 
-
 # Utility tables
 class ScanSet(minnie_function.ScanSet):
-    class Member(minnie_function.ScanSet.Member):
-        pass
+
+    class Member(minnie_function.ScanSet.Member): pass
 
     @classmethod
     def fill(cls, keys, name, description):
@@ -27,7 +26,6 @@ class ScanSet(minnie_function.ScanSet):
 
 
 class ResponseType(minnie_function.ResponseType):
-
     contents = [
         ("in_vivo", "Tuning properties extracted from in vivo responses."),
         ("in_silico", "Tuning properties extracted from in silico model responses."),
@@ -44,8 +42,8 @@ class StimType(minnie_function.StimType):
 
 
 class StimTypeGrp(minnie_function.StimTypeGrp):
-    class Member(minnie_function.StimTypeGrp.Member):
-        pass
+
+    class Member(minnie_function.StimTypeGrp.Member): pass
 
     @classmethod
     def fill(cls, keys):
@@ -67,8 +65,8 @@ class StimTypeGrp(minnie_function.StimTypeGrp):
 # Faithful copy of functional properties from external database
 ## Orientation
 class OrientationDV11521GD(minnie_function.OrientationDV11521GD):
-    class Unit(minnie_function.OrientationDV11521GD.Unit):
-        pass
+
+    class Unit(minnie_function.OrientationDV11521GD.Unit): pass
 
     @classmethod
     def update_virtual_modules(cls, module_name, schema_name):
@@ -272,7 +270,6 @@ class Orientation(minnie_function.Orientation):
 
 
 class OrientationScanInfo(minnie_function.OrientationScanInfo):
-    
     @property
     def key_source(self):
         return Orientation
@@ -307,8 +304,8 @@ class OrientationScanInfo(minnie_function.OrientationScanInfo):
 
 
 class OrientationScanSet(minnie_function.OrientationScanSet):
-    class Member(minnie_function.OrientationScanSet.Member):
-        pass
+    
+    class Member(minnie_function.OrientationScanSet.Member): pass
 
     @classmethod
     def fill(cls, keys, description=""):

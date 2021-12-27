@@ -1,24 +1,19 @@
 import datajoint as dj
 from datajoint import datajoint_plus as djp
 
-import numpy as np
-import pandas as pd
+from ..config import minnie_nda_config as config
 
-from .. import config
-schema_obj = config.SCHEMAS.MINNIE_NDA
+config.register_externals()
+config.register_adapters(context=locals())
 
-config.register_adapters(schema_obj, context=locals())
-config.register_externals(schema_obj)
-
-schema = dj.schema(schema_obj.value)
+schema = dj.schema(config.schema_name, create_schema=True)
 
 @schema
 class Animal(djp.Lookup):
     definition = """
     animal_id            : int                          # id number 
     """
-
-    contents = [[17797]]
+    
 
 @schema
 class Scan(djp.Lookup):
@@ -90,17 +85,6 @@ class Scan(djp.Lookup):
         valid_depth=0        : tinyint                      # whether depth has been manually check
         """
 
-    
-    @classmethod
-    def fill(cls):
-        experiment = dj.create_virtual_module('experiment', 'pipeline_experiment')
-        reso = dj.create_virtual_module('reso', 'pipeline_reso')
-        meso = dj.create_virtual_module('meso', 'pipeline_meso')
-        cls.insert(experiment.Scan.proj(..., scan_session='session') & Animal, ignore_extra_fields=True, skip_duplicates=True)
-        cls.Experiment.insert(experiment.Scan.proj(..., scan_session='session') & Animal, skip_duplicates=True)
-        cls.Reso.insert(reso.ScanInfo.proj(..., scan_session='session') & Animal, skip_duplicates=True)
-        cls.Meso.insert(meso.ScanInfo.proj(..., scan_session='session') & Animal, skip_duplicates=True)
-        
 
 @schema
 class Stack(djp.Lookup):    
@@ -149,15 +133,6 @@ class Stack(djp.Lookup):
         surf_z               : float                        # (um) depth of first slice - half a z step (cortex is at z=0)
         """
 
-    
-    @classmethod
-    def fill(cls):
-        experiment = dj.create_virtual_module('experiment', 'pipeline_experiment')
-        stack = dj.create_virtual_module('stack', 'pipeline_stack')
-        cls.insert(experiment.Stack.proj(..., stack_session='session') & Animal, ignore_extra_fields=True, skip_duplicates=True)
-        cls.Experiment.insert(experiment.Stack.proj(..., stack_session='session') & Animal, skip_duplicates=True)
-        cls.Corrected.insert((stack.StackInfo * stack.CorrectedStack).proj(..., stack_session='session') & Animal, skip_duplicates=True)
-
 
 @schema
 class Field(djp.Lookup):
@@ -197,15 +172,6 @@ class Field(djp.Lookup):
         roi                  : tinyint                      # ROI to which this field belongs
         """
     
-    
-    @classmethod
-    def fill(cls):
-        reso = dj.create_virtual_module('reso', 'pipeline_reso')
-        meso = dj.create_virtual_module('meso', 'pipeline_meso')
-        for pipe, part in zip([reso, meso], [cls.Reso, cls.Meso]):
-            cls.insert(pipe.ScanInfo.Field.proj(scan_session='session') & Scan, ignore_extra_fields=True, skip_duplicates=True)
-            part.insert(pipe.ScanInfo.Field.proj(..., scan_session='session') & Scan, skip_duplicates=True)
-
 
 @schema
 class SummaryImages(djp.Lookup):
@@ -238,17 +204,7 @@ class SummaryImages(djp.Lookup):
         ---
         l6norm_image           : longblob                     # 
         """
-    
-    @classmethod
-    def fill(cls):
-        reso = dj.create_virtual_module('reso', 'pipeline_reso')
-        meso = dj.create_virtual_module('meso', 'pipeline_meso')
-        for pipe in [reso, meso]:
-            cls.insert(pipe.SummaryImages.proj(scan_session='session', scan_channel='channel') & Field, skip_duplicates=True, ignore_extra_fields=True)
-            cls.Average.insert(pipe.SummaryImages.Average.proj(..., scan_session='session', scan_channel='channel') & Field, skip_duplicates=True, ignore_extra_fields=True)
-            cls.Correlation.insert(pipe.SummaryImages.Correlation.proj(..., scan_session='session', scan_channel='channel') & Field, skip_duplicates=True, ignore_extra_fields=True)
-            cls.L6Norm.insert(pipe.SummaryImages.L6Norm.proj(..., scan_session='session', scan_channel='channel') & Field, skip_duplicates=True, ignore_extra_fields=True)
-    
+
     class All:
         def __new__(cls):
             return SummaryImages * SummaryImages.Average * SummaryImages.Correlation * SummaryImages.L6Norm  
@@ -263,10 +219,6 @@ class SegmentationMethod(djp.Lookup):
     name                 : varchar(16)                  # 
     details              : varchar(255)                 #
     """
-
-    contents = [
-        [6,	'nmf-test',	'test nmf with diff parameters']
-    ]
 
     
 @schema
@@ -299,18 +251,6 @@ class Segmentation(djp.Lookup):
         weights              : longblob                     # weights of the mask at the indices above
         """
     
-    
-    @classmethod
-    def fill(cls):
-        reso = dj.create_virtual_module('reso', 'pipeline_reso')
-        meso = dj.create_virtual_module('meso', 'pipeline_meso')
-        for segmentation_method in [6]:
-            for pipe in [reso, meso]:
-                cls.insert(pipe.Segmentation.proj(..., scan_session='session', scan_channel='channel') & Field & {'segmentation_method': segmentation_method}, skip_duplicates=True, ignore_extra_fields=True)
-                cls.CNMFCaImAn.insert(pipe.Segmentation.CNMF.proj(..., scan_session='session') & Field & {'segmentation_method': segmentation_method}, skip_duplicates=True, ignore_extra_fields=True)
-                cls.Mask.insert(pipe.Segmentation.Mask.proj(..., scan_session='session') & Field & {'segmentation_method': segmentation_method}, skip_duplicates=True, ignore_extra_fields=True)
-            
-
 
 @schema
 class MaskClassificationMethod(djp.Lookup):
@@ -321,10 +261,6 @@ class MaskClassificationMethod(djp.Lookup):
     name                 : varchar(16)                  # 
     details              : varchar(255)                 # 
     """
-    
-    contents = [
-        [2, 'cnn-caiman', 'classification made by a trained convolutional network']
-    ]
 
 
 @schema
@@ -346,15 +282,6 @@ class MaskClassification(djp.Lookup):
         mask_type            : varchar(16)                  # mask classification
         """
     
-    @classmethod
-    def fill(cls):
-        reso = dj.create_virtual_module('reso', 'pipeline_reso')
-        meso = dj.create_virtual_module('meso', 'pipeline_meso')
-        for mask_classification_method in [2]:
-            for pipe in [reso, meso]:
-                cls.insert(pipe.MaskClassification.proj(..., scan_session='session', mask_classification_method='classification_method') & Segmentation & {'mask_classification_method': mask_classification_method}, skip_duplicates=True, ignore_extra_fields=True)
-                cls.Type.insert(pipe.MaskClassification.Type.proj(..., scan_session='session', mask_classification_method='classification_method', mask_type='type') & Segmentation & {'mask_classification_method': mask_classification_method}, skip_duplicates=True, ignore_extra_fields=True)
-
 
 @schema
 class Unit(djp.Lookup):
@@ -372,14 +299,7 @@ class Unit(djp.Lookup):
     px_y                 : smallint                     # y-coordinate of centroid in the frame
     ms_delay             : smallint                     # (ms) delay from start of frame to recording of this unit
     """
-
-    @classmethod
-    def fill(cls):
-        reso = dj.create_virtual_module('reso', 'pipeline_reso')
-        meso = dj.create_virtual_module('meso', 'pipeline_meso')
-        for pipe in [reso, meso]:
-            cls.insert((pipe.ScanSet.Unit * pipe.ScanSet.UnitInfo).proj(..., scan_session='session') & Scan & SegmentationMethod, skip_duplicates=True, ignore_extra_fields=True)
-    
+  
 
 @schema
 class RegistrationMethod(djp.Lookup):
@@ -390,12 +310,7 @@ class RegistrationMethod(djp.Lookup):
     name                 : varchar(16)                  # short name to identify the registration method
     details              : varchar(255)                 # more details
     """
-    
-    contents = [
-        [1, 'rigid', '3-d cross-correlation'],
-        [2, 'affine', 'exhaustive search of 3-d rotations + cross-correlation'],
-        [3, 'nonrigid', 'affine plus deformation field learnt via gradient ascent on correlation']
-    ]
+
 
 @schema
 class Registration(djp.Lookup):
@@ -458,14 +373,6 @@ class Registration(djp.Lookup):
         score                : float                        # cross-correlation score (-1 to 1)
         reg_field            : longblob                     # extracted field from the stack in the specified position
         """
-        
-    @classmethod
-    def fill(cls):
-        stack = dj.create_virtual_module('stack', 'pipeline_stack')       
-        cls.insert((stack.Registration & Stack.Corrected).proj(registration_method='NULL').proj() * RegistrationMethod, skip_duplicates=True, ignore_extra_fields=True)
-        cls.Rigid.insert(stack.Registration.Rigid.proj(..., registration_method='1')  & Stack.Corrected, skip_duplicates=True, ignore_extra_fields=True)
-        cls.Affine.insert(stack.Registration.Affine.proj(..., registration_method='2') & Stack.Corrected, skip_duplicates=True, ignore_extra_fields=True)
-        cls.NonRigid.insert(stack.Registration.NonRigid.proj(..., registration_method='3') & Stack.Corrected, skip_duplicates=True, ignore_extra_fields=True)
 
 
 @schema
@@ -477,10 +384,6 @@ class AreaMaskMethod(djp.Lookup):
     name                 : varchar(16)                  # 
     details              : varchar(255)                 # 
     """
-    
-    contents = [
-        [1, 'manual', ''], [2, 'manual', 'extrap to stack edges']
-    ]
 
 
 @schema
@@ -506,14 +409,6 @@ class Area(djp.Lookup):
         ---
         mask                 : blob                         # 2D mask of pixel area membership
         """
-        
-    @classmethod
-    def fill(cls):
-        stack = dj.create_virtual_module('stack', 'pipeline_stack')
-        source = stack.Area.Mask & Stack.Corrected & Scan & 'registration_method=5'
-        to_insert = source.proj(..., reg_method='registration_method').proj(..., reg_method='NULL').proj(..., registration_method='2')
-        cls.insert(to_insert, skip_duplicates=True, ignore_extra_fields=True)
-        cls.Mask.insert(to_insert, skip_duplicates=True, ignore_extra_fields=True)
 
 @schema
 class Grid(djp.Lookup):
@@ -522,25 +417,6 @@ class Grid(djp.Lookup):
     ---
     grid                 : longblob                     # field grid in motor coordinates after registration into stack
     """
-    
-    @classmethod
-    def fill(cls):
-        from pipeline import stack
-        # must be run with torch == 1.2.0
-        for key in Registration:
-            # get registration type
-            reg_type = (RegistrationMethod & key).fetch1('name')
-            
-            # compatibility with pipeline
-            key['registration_method'] = 5 
-            
-            # get grid
-            key['grid'] = (stack.Registration & key).get_grid(type=reg_type)
-            
-            # convert registration method back to schema convention
-            key['registration_method'] = (RegistrationMethod & {'name': reg_type}).fetch1('registration_method')
-            
-            cls.insert1(key, skip_duplicates=True, ignore_extra_fields=True)
 
 
 @schema
@@ -554,15 +430,6 @@ class AreaMembership(djp.Lookup):
     -> Area.Mask
     confidence           : float                        # confidence in area assignment
     """
-
-
-    @classmethod
-    def fill(cls):
-        meso = dj.create_virtual_module('meso', 'pipeline_meso')
-        source = meso.AreaMembership.UnitInfo.proj(..., scan_session='session') & Animal
-        source &= Registration.proj(registration_method='NULL').proj()
-        source = source.proj(..., registration_method='2') & Unit
-        cls.insert(source, skip_duplicates=True, ignore_extra_fields=True)
 
 
 @schema
@@ -579,14 +446,6 @@ class StackUnit(djp.Lookup):
     stack_y            : float    # centroid y stack coordinates with 0,0,0 in top, left, back corner of stack (microns)
     stack_z            : float    # centroid z stack coordinates with 0,0,0 in top, left, back corner of stack (microns)   
     """
-    
-    @classmethod
-    def fill(cls):
-        meso = dj.create_virtual_module('meso', 'pipeline_meso')
-        source = meso.StackCoordinates.UnitInfo.proj(..., scan_session='session', motor_x='stack_x', motor_y='stack_y', motor_z='stack_z') & Animal
-        source &= Registration.proj(registration_method='NULL').proj() & 'segmentation_method=6'
-        source = (source * Stack.Corrected).proj('motor_x', 'motor_y', 'motor_z', registration_method='2', stack_x = 'round(motor_x - x + um_width/2, 2)', stack_y = 'round(motor_y - y + um_height/2, 2)', stack_z = 'round(motor_z - z + um_depth/2, 2)')
-        cls.insert(source, skip_duplicates=True, ignore_extra_fields=True)
 
 
 @schema
@@ -617,20 +476,6 @@ class UnitSource(djp.Manual):
     -> MaskClassification.Type
     -> AreaMembership
     """
-        
-    @classmethod
-    def fill(cls): 
-        key = {}
-        key['animal_id'] = 17797
-        key['stack_session'] = 9
-        key['stack_idx'] = 19
-        key['volume_id'] = 1
-        key['segmentation_method'] = 6
-        key['registration_method'] = 2
-        key['mask_classification_method'] = 2
-        key['ret_hash'] = "edec10b648420dd1dc8007b607a5046b"
-
-        cls.insert(Unit * StackUnit * MaskClassification.Type * AreaMembership & key, ignore_extra_fields=True, skip_duplicates=True)
 
 
 schema.spawn_missing_classes()

@@ -1,16 +1,13 @@
 import datajoint as dj
 from datajoint import datajoint_plus as djp
+
 from . import minnie_nda
+from ..config import minnie_function_config as config
 
-from .. import config
+config.register_externals()
+config.register_adapters(context=locals())
 
-schema_obj = config.SCHEMAS.MINNIE_FUNCTION
-
-config.register_adapters(schema_obj, context=locals())
-config.register_externals(schema_obj)
-
-schema = dj.schema(schema_obj.value, create_schema=True)
-
+schema = dj.schema(config.schema_name, create_schema=True)
 
 # Utility tables
 @schema
@@ -277,4 +274,5 @@ class OrientationScanSet(djp.Lookup):
         )
 
 
+schema.spawn_missing_classes()
 schema.connection.dependencies.load()
