@@ -212,17 +212,6 @@ class Orientation(minnie_function.Orientation):
         for part in cls.parts(as_cls=True):
             part.fill()
 
-    def part_table(self, key=None):
-        key = self.fetch("KEY") if key is None else (self & key).fetch("KEY")
-        part = [
-            self.restrict_one_part_with_hash(k[self.hash_name]).__class__ for k in key
-        ]
-        part = set(part)
-        assert len(part) == 1
-        part = part.pop()
-        part_key = (part & key).fetch()
-        return part & part_key
-
     def stimulus_type(self, key=None):
         key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
         return (self & key).part_table().stimulus_type()
@@ -238,16 +227,6 @@ class Orientation(minnie_function.Orientation):
     def len_sec(self, key=None):
         key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
         return (self & key).part_table().len_sec()
-
-    def _pref_ori(self, key=None, unit_key=None):
-        key = self.fetch("KEY") if key is None else (self & key).fetch("KEY")
-        unit_key = {} if unit_key is None else unit_key
-        return (self & key).part_table()._pref_ori(unit_key=unit_key)
-
-    def _tunability(self, key=None, unit_key=None):
-        key = self.fetch("KEY") if key is None else (self & key).fetch("KEY")
-        unit_key = {} if unit_key is None else unit_key
-        return (self & key).part_table()._tunability(unit_key=unit_key)
         
     @classmethod
     def all_stimulus_types(cls):
@@ -288,16 +267,6 @@ class Orientation(minnie_function.Orientation):
         def len_sec(self, key=None):
             key = self.fetch1() if key is None else (self & key).fetch1()
             return (self.source & key).len_sec()
-
-        def _pref_ori(self, key=None, unit_key=None):
-            key = self.fetch() if key is None else (self & key).fetch()
-            unit_key = {} if unit_key is None else unit_key
-            return (self.source & key).pref_ori(unit_key=unit_key)
-
-        def _tunability(self, key=None, unit_key=None):
-            key = self.fetch() if key is None else (self & key).fetch()
-            unit_key = {} if unit_key is None else unit_key
-            return (self.source & key).tunability(unit_key=unit_key)
 
 
 class OrientationScanInfo(minnie_function.OrientationScanInfo):
