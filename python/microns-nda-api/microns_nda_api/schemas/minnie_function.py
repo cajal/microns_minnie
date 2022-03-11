@@ -9,6 +9,22 @@ config.register_adapters(context=locals())
 
 schema = dj.schema(config.schema_name, create_schema=True)
 
+# Utility mixins
+class MakerMixin:
+    def maker(self, key=None, return_list=False):
+        rel = self if key is None else self & key
+        makers = [
+            getattr(self, m)
+            for m in (dj.U(self.maker_name) & rel).fetch(self.maker_name)
+            if hasattr(self, m)
+        ]
+        if len(makers) == 1:
+            return makers[0]
+        elif return_list:
+            return makers
+        raise Exception('MakerMixin: Multiple or none makers found for:\n {}\nSet return_list to True if a list of makers is expected!'.format(rel.__repr__))
+
+
 # Utility tables
 @schema
 class ScanSet(djp.Lookup):
@@ -71,8 +87,8 @@ class StimTypeGrp(djp.Lookup):
         """
 
 
-# Faithful copy of functional properties from external database
-## Orientation
+# Orientation
+## Faithful copy of functional properties from external database
 @schema
 class OrientationDV11521GD(djp.Lookup):
     definition = """
@@ -143,6 +159,7 @@ class OrientationDV11521GD(djp.Lookup):
         ).proj(tunability="kappa")
 
 
+## Aggregation tables
 @schema
 class Orientation(djp.Lookup):
     hash_part_table_names = True
@@ -177,7 +194,7 @@ class Orientation(djp.Lookup):
         return (self & key).part_table()._tunability(unit_key=unit_key)
 
     class DV11521GD(djp.Part):
-        _source = 'OrientationDV11521GD'
+        _source = "OrientationDV11521GD"
         source = eval(_source)
         enable_hashing = True
         hash_name = "orientation_hash"
@@ -272,6 +289,352 @@ class OrientationScanSet(djp.Lookup):
         return (OrientationScanInfo & (self * self.Member).proj()).tunability(
             unit_key=unit_key
         )
+
+
+# Oracle
+## Faithful copy of data
+@schema
+class OracleDVScan1(djp.Manual):
+    definition = """
+    # oracle value computed with dynamic vision scan v1
+    animal_id            : int                          # id number
+    scan_session         : smallint                     # session index for the mouse
+    scan_idx             : smallint                     # number of TIFF stack file
+    preprocess_hash      : varchar(128)                 # scan and stimulus preprocessing
+    trial_hash           : varchar(256)                 # unique identifier for trial configuration
+    slice_set_hash       : varchar(256)                 # policy for defining groups of stimulus slices
+    tier                 : varchar(20)                  # data tier
+    min_trials_per_slice : int unsigned                 # minimum number of trials per slice
+    first_response       : int unsigned                 # first sampled response index
+    statistic_type       : varchar(64)                  # statistic type
+    """
+
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        statistic       : float                         # statistic summarizing relationship between trial and oracle
+        """
+
+    def scan(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return (self & key).fetch("animal_id", "scan_session", "scan_idx")
+
+    def oracle(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return (
+            dj.U(*minnie_nda.UnitSource.heading.primary_key, "statistic")
+            & (self.Unit & key)
+        ).proj(oracle="statistic")
+
+
+@schema
+class OracleTuneMovieOracle(djp.Manual):
+    definition = """
+    # oracle score imported from pipeline_tune.__movie_oracle__total
+    animal_id            : int                          # id number
+    scan_session         : smallint                     # session index for the mouse
+    scan_idx             : smallint                     # number of TIFF stack file
+    pipe_version         : smallint                     # 
+    segmentation_method  : tinyint                      # 
+    spike_method         : tinyint                      # spike inference method
+    """
+
+    class Unit(djp.Part):
+        definition = """
+        -> minnie_nda.UnitSource
+        ---
+        trials               : int                          # number of trials used
+        pearson              : float                        # per unit oracle pearson correlation over all movies
+        """
+
+    def scan(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return (self & key).fetch("animal_id", "scan_session", "scan_idx")
+
+    def oracle(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return (
+            dj.U(*minnie_nda.UnitSource.heading.primary_key, "pearson")
+            & (self.Unit & key)
+        ).proj(oracle="pearson")
+
+
+## Aggregation tables
+@schema
+class Oracle(djp.Lookup):
+    hash_part_table_names = True
+    hash_name = "oracle_hash"
+    definition = """
+    # orientation
+    oracle_hash    : varchar(32)
+    ---
+    oracle_type    : varchar(48)
+    timestamp=CURRENT_TIMESTAMP : timestamp
+    """
+
+    def scan(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return self.r1p(key).scan()
+
+    def oracle(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return self.r1p(key).oracle()
+
+    class DVScan1(djp.Part):
+        _source = "OracleDVScan1"
+        source = eval(_source)
+        enable_hashing = True
+        hash_name = "oracle_hash"
+        hashed_attrs = source.primary_key
+        definition = """
+        #
+        -> master
+        ---
+        -> OracleDVScan1
+        """
+
+        def scan(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).scan()
+
+        def oracle(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).oracle()
+
+    class TuneMovieOracle(djp.Part):
+        _source = "OracleTuneMovieOracle"
+        source = eval(_source)
+        enable_hashing = True
+        hash_name = "oracle_hash"
+        hashed_attrs = source.primary_key
+        definition = """
+        #
+        -> master
+        ---
+        -> OracleTuneMovieOracle
+        """
+
+        def scan(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).scan()
+
+        def oracle(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).oracle()
+
+
+@schema
+class OracleScanInfo(djp.Computed):
+    definition = """ # Provide useful information about the oracle scores
+    -> Oracle
+    ---
+    -> minnie_nda.Scan
+    """
+
+
+@schema
+class OracleScanSet(djp.Lookup):
+    enable_hashing = True
+    hash_name = "oracle_scan_set_hash"
+    hashed_attrs = OracleScanInfo.primary_key
+    hash_group = True
+    definition = """ # A group of orientation with the same response type and stimulus type
+    oracle_scan_set_hash      : varchar(32)
+    ---
+    -> ScanSet
+    description            : varchar(128)
+    timestamp=CURRENT_TIMESTAMP : timestamp
+    """
+
+    class Member(djp.Part):
+        definition = """
+        -> master
+        -> OracleScanInfo
+        """
+
+    def oracle(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        oracle_key = (
+            (self.Member * Oracle.proj(*list(set(Oracle.heading) - {"timestamp"})))
+            & key
+        ).fetch()
+        # assume all members of a set have the same oracle type
+        assert len({key["oracle_type"] for key in oracle_key}) == 1
+        return Oracle.r1p(oracle_key).oracle()
+
+
+# # Predictive model performance and parameters
+## Aggregation tables
+@schema
+class DynamicModel(MakerMixin, djp.Lookup):
+    hash_part_table_names = True
+    hash_name = "dynamic_model_hash"
+    maker_name = "dynamic_model_type"
+    definition = """
+    # dynamic predictive models
+    -> minnie_nda.Scan
+    dynamic_model_hash    : varchar(32)
+    ---
+    dynamic_model_type    : varchar(48)
+    timestamp=CURRENT_TIMESTAMP : timestamp
+    """
+
+    def readout(self, part_key=None):
+        return (self.maker() & self).readout(part_key)
+
+    class NnsV5(djp.Part):
+        definition = """
+        # dynamic model saved in `dv_nns_v5_scan.__scan_model`
+        -> master
+        ---
+        scan_hash            : varchar(256)                 # configuration of scan dataset
+        model_hash           : varchar(256)                 # unique identifier for model configuration
+        instance_hash        : varchar(128)                 # model instance
+        """
+        enable_hashing = True
+        hash_name = "dynamic_model_hash"
+        hashed_attrs = [
+            "scan_hash",
+            "model_hash",
+            "instance_hash",
+            "animal_id",
+            "scan_session",
+            "scan_idx",
+        ]
+
+        def readout(self, part_key=None):
+            part_key = {} if part_key is None else part_key
+            return DynamicModel.NnsV5UnitReadout & self & part_key
+
+    class NnsV5UnitReadout(djp.Part):
+        definition = """
+        # readout saved in `dv_nns_v5_scan.__readout`
+        -> DynamicModel.NnsV5
+        -> minnie_nda.UnitSource
+        ---
+        ro_x                 : float                        # readout x coordinate
+        ro_y                 : float                        # readout y coordinate
+        ro_weight            : longblob                     # readout weight, [head, feature]
+        """
+
+
+@schema
+class DynamicModelScore(MakerMixin, djp.Lookup):
+    hash_part_table_names = True
+    hash_name = "dynamic_score_hash"
+    maker_name = "dynamic_score_type"
+    definition = """
+    # dynamic predictive models
+    -> DynamicModel
+    dynamic_score_hash    : varchar(32)
+    ---
+    dynamic_score_type    : varchar(48)
+    timestamp=CURRENT_TIMESTAMP : timestamp
+    """
+
+    def unit_score(self, part_key=None):
+        return (self.maker() & self).unit_score(part_key)
+
+    class NnsV5(djp.Part):
+        definition = """
+        # Predictive model performance and parameters
+        -> master
+        ---
+        slice_set_hash       : varchar(256)                 # policy for defining groups of stimulus slices
+        tier                 : varchar(20)                  # data tier
+        min_trials_per_slice : int unsigned                 # minimum number of trials per slice
+        statistic_type       : varchar(64)                  # statistic type
+        behavior_hash        : varchar(256)                 # nn behavior configuration
+        eye_position         : bool                         # use eye position data
+        behavior             : bool                         # use behavioral data
+        """
+        enable_hashing = True
+        hash_name = "dynamic_score_hash"
+        hashed_attrs = [
+            "slice_set_hash",
+            "tier",
+            "min_trials_per_slice",
+            "statistic_type",
+            "behavior_hash",
+        ]
+
+        def unit_score(self, part_key=None):
+            part_key = {} if part_key is None else part_key
+            return (DynamicModelScore.NnsV5UnitScore * self) & part_key
+
+    class NnsV5UnitScore(djp.Part):
+        definition = """
+        -> DynamicModelScore.NnsV5
+        -> minnie_nda.UnitSource
+        ---
+        statistic            : float                        # statistic summarizing relationship between scan and behavioral model responses
+        """
+
+
+@schema
+class DynamicModelScanSet(djp.Lookup):
+    enable_hashing = True
+    hash_name = "dynamic_model_scan_set_hash"
+    hashed_attrs = DynamicModel.primary_key
+    hash_group = True
+    definition = """
+    # a set of dynamic predictive models
+    dynamic_model_scan_set_hash    : varchar(32)
+    ---
+    -> ScanSet
+    name           : varchar(48)          #  name of the group
+    description    : varchar(450)         #  description of the group
+    n_members      : int                  #  number of members in the group
+    timestamp=CURRENT_TIMESTAMP : timestamp
+    """
+
+    class Member(djp.Part):
+        definition = """
+        # Predictive model performance and parameters
+        -> master
+        -> DynamicModel
+        """
+
+    def readout(self, part_key=None):
+        master_key = (DynamicModel & self.Member().proj()).proj().fetch()
+        return (DynamicModel & master_key).readout(part_key)
+
+    def unit_score(self, part_key=None):
+        master_key = (DynamicModel & self.Member().proj()).proj().fetch()
+        return (DynamicModelScore & master_key).unit_score(part_key)
+
+@schema
+class DynamicModelRespCorr(djp.Manual):
+    definition = '''
+    # response correlation matrix
+    -> DynamicModelScanSet
+    dynamic_resp_corr_hash : varchar(32)
+    ---
+    n_neuron               : int                # number of neurons
+    description            : varchar(256)       # description of the response correlation matrix
+    '''
+
+    class DVManual(djp.Manual):
+        definition = '''
+        # response correlation matrices computed manually in dynamic_vision environment 
+        -> master
+        ---
+        script_gh_link     : varchar(256)       # link to script for replicating the response matrix
+        resp_corr_matrix   : 
+        '''
+    
+    class DVManualUnit(djp.Manual):
+        definition = """
+        # unit identity of each dimension in the response correlation matrices
+        -> master
+        corr_matrix_idx    : int unsigned       # index of the unit in the response correlation matrix
+        ---
+        -> minnie_nda.UnitSource
+        """
+
+
 
 
 schema.spawn_missing_classes()
