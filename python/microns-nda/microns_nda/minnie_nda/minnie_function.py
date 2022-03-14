@@ -86,7 +86,7 @@ class StimTypeGrp(minnie_function.StimTypeGrp):
 
 # Orientation
 ## Faithful copy of functional properties from external database
-class OrientationDV11521GD(VMMixin, minnie_function.OrientationDV11521GD):
+class OrientationDV11521GD(minnie_function.OrientationDV11521GD, VMMixin):
     class Unit(minnie_function.OrientationDV11521GD.Unit):
         pass
 
@@ -386,7 +386,7 @@ class OracleDVScan1(minnie_function.OracleDVScan1, VMMixin):
             )
 
 
-class OracleTuneMovieOracle(VMMixin, minnie_function.OracleTuneMovieOracle):
+class OracleTuneMovieOracle(minnie_function.OracleTuneMovieOracle, VMMixin):
 
     virtual_module_dict = {
         "pipeline_tune": "pipeline_tune",
@@ -499,7 +499,7 @@ class OracleScanSet(minnie_function.OracleScanSet):
 # # Predictive model performance and parameters
 ## Aggregation tables
 class DynamicModel(minnie_function.DynamicModel):
-    class NnsV5(VMMixin, minnie_function.DynamicModel.NnsV5):
+    class NnsV5(minnie_function.DynamicModel.NnsV5, VMMixin):
         virtual_module_dict = {
             "dv_nns_v5_scan": "dv_nns_v5_scan",
         }
@@ -549,7 +549,7 @@ class DynamicModel(minnie_function.DynamicModel):
 
 
 class DynamicModelScore(minnie_function.DynamicModelScore):
-    class NnsV5(VMMixin, minnie_function.DynamicModelScore.NnsV5):
+    class NnsV5(minnie_function.DynamicModelScore.NnsV5, VMMixin):
         virtual_module_dict = {
             "dv_nns_v5_scan": "dv_nns_v5_scan",
             "dv_nns_v5_model": "dv_nns_v5_model",
