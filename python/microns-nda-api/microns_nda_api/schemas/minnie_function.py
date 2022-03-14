@@ -318,7 +318,7 @@ class OracleDVScan1(djp.Manual):
         """
 
     def scan(self, key=None):
-        key = self.fetch() if key is None else (self & key).fetch()
+        key = self.fetch('KEY') if key is None else (self & key).fetch('KEY')
         return (self & key).fetch("animal_id", "scan_session", "scan_idx")
 
     def oracle(self, key=None):
@@ -367,7 +367,7 @@ class Oracle(djp.Lookup):
     hash_part_table_names = True
     hash_name = "oracle_hash"
     definition = """
-    # orientation
+    # oracle
     oracle_hash    : varchar(32)
     ---
     oracle_type    : varchar(48)
@@ -468,7 +468,7 @@ class OracleScanSet(djp.Lookup):
 # # Predictive model performance and parameters
 ## Aggregation tables
 @schema
-class DynamicModel(MakerMixin, djp.Lookup):
+class DynamicModel(djp.Lookup, MakerMixin):
     hash_part_table_names = True
     hash_name = "dynamic_model_hash"
     maker_name = "dynamic_model_type"
@@ -521,7 +521,7 @@ class DynamicModel(MakerMixin, djp.Lookup):
 
 
 @schema
-class DynamicModelScore(MakerMixin, djp.Lookup):
+class DynamicModelScore(djp.Lookup, MakerMixin):
     hash_part_table_names = True
     hash_name = "dynamic_score_hash"
     maker_name = "dynamic_score_type"
@@ -605,34 +605,35 @@ class DynamicModelScanSet(djp.Lookup):
         master_key = (DynamicModel & self.Member().proj()).proj().fetch()
         return (DynamicModelScore & master_key).unit_score(part_key)
 
-@schema
-class DynamicModelRespCorr(djp.Manual):
-    definition = '''
-    # response correlation matrix
-    -> DynamicModelScanSet
-    dynamic_resp_corr_hash : varchar(32)
-    ---
-    n_neuron               : int                # number of neurons
-    description            : varchar(256)       # description of the response correlation matrix
-    '''
+# WIP
+# @schema
+# class DynamicModelRespCorr(djp.Manual):
+#     definition = '''
+#     # response correlation matrix
+#     -> DynamicModelScanSet
+#     dynamic_resp_corr_hash : varchar(32)
+#     ---
+#     n_neuron               : int                # number of neurons
+#     description            : varchar(256)       # description of the response correlation matrix
+#     '''
 
-    class DVManual(djp.Manual):
-        definition = '''
-        # response correlation matrices computed manually in dynamic_vision environment 
-        -> master
-        ---
-        script_gh_link     : varchar(256)       # link to script for replicating the response matrix
-        resp_corr_matrix   : 
-        '''
+#     class DVManual(djp.Manual):
+#         definition = '''
+#         # response correlation matrices computed manually in dynamic_vision environment 
+#         -> master
+#         ---
+#         script_gh_link     : varchar(256)       # link to script for replicating the response matrix
+#         resp_corr_matrix   : 
+#         '''
     
-    class DVManualUnit(djp.Manual):
-        definition = """
-        # unit identity of each dimension in the response correlation matrices
-        -> master
-        corr_matrix_idx    : int unsigned       # index of the unit in the response correlation matrix
-        ---
-        -> minnie_nda.UnitSource
-        """
+#     class DVManualUnit(djp.Manual):
+#         definition = """
+#         # unit identity of each dimension in the response correlation matrices
+#         -> master
+#         corr_matrix_idx    : int unsigned       # index of the unit in the response correlation matrix
+#         ---
+#         -> minnie_nda.UnitSource
+#         """
 
 
 

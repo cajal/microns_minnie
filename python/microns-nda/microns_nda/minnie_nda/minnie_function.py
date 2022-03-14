@@ -357,7 +357,7 @@ class OrientationScanSet(minnie_function.OrientationScanSet):
 
 # Oracle
 ## Faithful copy of data
-class OracleDVScan1(VMMixin, minnie_function.OracleDVScan1):
+class OracleDVScan1(minnie_function.OracleDVScan1, VMMixin):
 
     virtual_module_dict = {
         "dv_scans_v1_oracle": "dv_scans_v1_oracle",
