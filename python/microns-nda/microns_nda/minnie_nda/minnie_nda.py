@@ -64,7 +64,7 @@ class SummaryImages(nda.SummaryImages):
     
     class L6Norm(nda.SummaryImages.L6Norm): pass
 
-    class All(nda.All): pass
+    class All(nda.SummaryImages.All): pass
     
     @classmethod
     def fill(cls):
