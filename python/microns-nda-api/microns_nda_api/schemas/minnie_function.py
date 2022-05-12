@@ -148,15 +148,18 @@ class OrientationDV11521GD(djp.Lookup):
 
     def pref_ori(self, unit_key=None):
         unit_key = {} if unit_key is None else unit_key
-        return dj.U(*minnie_nda.UnitSource.primary_key, "pref_ori") & (
+        return (dj.U(*minnie_nda.UnitSource.primary_key, "pref_ori") & (
             self.Unit & self & unit_key
-        ).proj(pref_ori="mu")
+        ).proj(pref_ori="mu")).fetch(format='frame').reset_index()
 
-    def tunability(self, unit_key=None):
+    def selectivity(self, unit_key=None, percentile=True):
         unit_key = {} if unit_key is None else unit_key
-        return dj.U(*minnie_nda.UnitSource.primary_key, "tunability") & (
+        df = (dj.U(*minnie_nda.UnitSource.primary_key, "selectivity") & (
             self.Unit & self & unit_key
-        ).proj(tunability="kappa")
+        ).proj(selectivity="kappa")).fetch(format='frame').reset_index()
+        if percentile:
+            df['selectivity'] = df['selectivity'].rank(pct=True)
+        return df
 
 
 ## Aggregation tables
@@ -188,10 +191,10 @@ class Orientation(djp.Lookup):
         unit_key = {} if unit_key is None else unit_key
         return (self & key).part_table()._pref_ori(unit_key=unit_key)
 
-    def _tunability(self, key=None, unit_key=None):
+    def _selectivity(self, key=None, unit_key=None, percentile=False):
         key = self.fetch("KEY") if key is None else (self & key).fetch("KEY")
         unit_key = {} if unit_key is None else unit_key
-        return (self & key).part_table()._tunability(unit_key=unit_key)
+        return (self & key).part_table()._selectivity(unit_key=unit_key, percentile=percentile)
 
     class DV11521GD(djp.Part):
         _source = "OrientationDV11521GD"
@@ -211,10 +214,10 @@ class Orientation(djp.Lookup):
             unit_key = {} if unit_key is None else unit_key
             return (self.source & key).pref_ori(unit_key=unit_key)
 
-        def _tunability(self, key=None, unit_key=None):
+        def _selectivity(self, key=None, unit_key=None, percentile=False):
             key = self.fetch() if key is None else (self & key).fetch()
             unit_key = {} if unit_key is None else unit_key
-            return (self.source & key).tunability(unit_key=unit_key)
+            return (self.source & key).selectivity(unit_key=unit_key, percentile=percentile)
 
 
 @schema
@@ -234,10 +237,10 @@ class OrientationScanInfo(djp.Computed):
         assert minnie_nda.Scan().aggr(self, count="count(*)").fetch("count").max() == 1
         return (Orientation & self)._pref_ori(unit_key=unit_key)
 
-    def tunability(self, unit_key=None):
+    def selectivity(self, unit_key=None, percentile=False):
         unit_key = {} if unit_key is None else unit_key
         assert minnie_nda.Scan().aggr(self, count="count(*)").fetch("count").max() == 1
-        return (Orientation & self)._tunability(unit_key=unit_key)
+        return (Orientation & self)._selectivity(unit_key=unit_key, percentile=percentile)
 
 
 @schema
@@ -285,9 +288,9 @@ class OrientationScanSet(djp.Lookup):
             unit_key=unit_key
         )
 
-    def tunability(self, unit_key=None):
-        return (OrientationScanInfo & (self * self.Member).proj()).tunability(
-            unit_key=unit_key
+    def selectivity(self, unit_key=None, percentile=False):
+        return (OrientationScanInfo & (self * self.Member).proj()).selectivity(
+            unit_key=unit_key, percentile=percentile
         )
 
 
