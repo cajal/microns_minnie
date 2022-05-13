@@ -1,5 +1,5 @@
 import datajoint as dj
-from datajoint import datajoint_plus as djp
+import datajoint_plus as djp
 
 from ..config import minnie_nda_config as config
 

@@ -1,7 +1,7 @@
 """
 Configuration package/module for microns-nda.
 """
-import datajoint.datajoint_plus as djp
+import datajoint_plus as djp
 from microns_utils.config_utils import SchemaConfig
 from . import adapters
 from . import externals
