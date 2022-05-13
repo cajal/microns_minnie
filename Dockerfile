@@ -1,4 +1,4 @@
-FROM ninai/microns-base
+FROM at-docker.ad.bcm.edu:5000/microns-base
 LABEL mantainer="Zhuokun Ding <zhuokund@bcm.edu>, Stelios Papadopoulos <spapadop@bcm.edu>"
 
 # copy this project and install
