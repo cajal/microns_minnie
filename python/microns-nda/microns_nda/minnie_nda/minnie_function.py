@@ -1,5 +1,6 @@
 import functools
 import datajoint as dj
+import datajoint_plus as djp
 import pandas as pd
 from tqdm import tqdm
 from datajoint_plus.utils import classproperty
@@ -13,7 +14,7 @@ class VMMixin:
     @classmethod
     def update_virtual_modules(cls, module_name, schema_name):
         if module_name not in cls.virtual_modules:
-            cls.virtual_modules[module_name] = dj.create_virtual_module(
+            cls.virtual_modules[module_name] = djp.create_djp_module(
                 module_name, schema_name
             )
 
