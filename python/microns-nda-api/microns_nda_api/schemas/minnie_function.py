@@ -7,7 +7,7 @@ from ..config import minnie_function_config as config
 config.register_externals()
 config.register_adapters(context=locals())
 
-schema = dj.schema(config.schema_name, create_schema=True)
+schema = djp.schema(config.schema_name, create_schema=True)
 
 # Utility mixins
 class MakerMixin:
