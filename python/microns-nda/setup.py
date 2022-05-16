@@ -13,7 +13,7 @@ with open(path.join(here, '..', 'version.py')) as f:
 with open(path.join(here, 'requirements.txt')) as f:
     requirements = f.read().split()
 
-requirements += find_api('microns-nda-api')
+requirements += [find_api('microns-nda-api')]
 
 setup(
     name='microns-nda',
