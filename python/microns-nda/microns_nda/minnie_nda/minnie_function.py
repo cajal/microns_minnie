@@ -2,7 +2,7 @@ import functools
 import datajoint as dj
 import pandas as pd
 from tqdm import tqdm
-from datajoint.datajoint_plus import classproperty
+from datajoint_plus.utils import classproperty
 from microns_nda_api.schemas import minnie_function, minnie_nda
 
 # Utility functions
