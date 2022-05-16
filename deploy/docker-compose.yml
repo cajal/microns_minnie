@@ -13,6 +13,7 @@ x-shared: &common
     - /mnt:/mnt
   env_file:
     - .env
+  container_name: "microns-nda"
 
 services:
   notebook:

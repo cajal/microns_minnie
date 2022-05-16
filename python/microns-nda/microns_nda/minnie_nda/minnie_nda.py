@@ -1,4 +1,4 @@
-from datajoint import datajoint_plus as djp
+import datajoint_plus as djp
 
 from microns_nda_api.schemas import minnie_nda as nda
 
