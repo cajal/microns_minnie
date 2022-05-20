@@ -1,5 +1,5 @@
 import datajoint as dj
-from datajoint import datajoint_plus as djp
+import datajoint_plus as djp
 
 from . import minnie_nda
 from ..config import minnie_function_config as config
@@ -7,7 +7,7 @@ from ..config import minnie_function_config as config
 config.register_externals()
 config.register_adapters(context=locals())
 
-schema = dj.schema(config.schema_name, create_schema=True)
+schema = djp.schema(config.schema_name, create_schema=True)
 
 # Utility mixins
 class MakerMixin:

@@ -1,12 +1,12 @@
 import datajoint as dj
-from datajoint import datajoint_plus as djp
+import datajoint_plus as djp
 
 from ..config import minnie_nda_config as config
 
 config.register_externals()
 config.register_adapters(context=locals())
 
-schema = dj.schema(config.schema_name, create_schema=True)
+schema = djp.schema(config.schema_name, create_schema=True)
 
 @schema
 class Animal(djp.Lookup):
