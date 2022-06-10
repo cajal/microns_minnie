@@ -1,5 +1,6 @@
 import datajoint as dj
 import datajoint_plus as djp
+import numpy as np
 
 from . import minnie_nda
 from ..config import minnie_function_config as config
@@ -161,6 +162,57 @@ class OrientationDV11521GD(djp.Lookup):
             df['selectivity'] = df['selectivity'].rank(pct=True)
         return df
 
+@schema
+class OrientationDV231042(djp.Manual):
+    definition = """
+    # Orientation tuning extracted with the tuning pipeline within dynamic vision (version 2.3.10.4.2)
+    animal_id            : int                          # id number
+    scan_session         : smallint                     # session index for the mouse
+    scan_idx             : smallint                     # number of TIFF stack file
+    timing_id            : tinyint                      # align neural and stimulus timing
+    behavior_id          : tinyint                      # behavior resampling
+    response_id          : tinyint                      # neural response resampling
+    valid_id             : tinyint                      # neural response resampling
+    unique_id            : tinyint                      # unique unit parameters
+    pipe_version         : smallint                     # 
+    segmentation_method  : tinyint                      # 
+    direction_hash       : varchar(256)                 # unique identifier for direction configuration
+    ---
+    """
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        success              : tinyint                      # success of least squares optimization
+        mu                   : float                        # center of the first von Mises distribution, this is the preferred direction
+        phi                  : float                        # weight of the first von Mises distribution
+        kappa                : float                        # dispersion of both von Mises distributions
+        scale                : float                        # von Mises amplitude
+        bias                 : float                        # uniform amplitude
+        bvm_mse              : float                        # mean squared error
+        osi                  : float                        # orientation selectivity index
+        dsi                  : float                        # direction selectivity index
+        amp                  : float                        # amplitude
+        uniform_mse          : float                        # mean squared error
+        """
+
+    def pref_ori(self, unit_key=None):
+        unit_key = {} if unit_key is None else unit_key
+        unit_df = (dj.U(*minnie_nda.UnitSource.primary_key, "pref_ori") & (
+            self.Unit & self & unit_key
+        ).proj(pref_ori="mu")).fetch(format='frame').reset_index()
+        unit_df['pref_ori'] = unit_df['pref_ori'] % np.pi
+        return unit_df
+
+    def selectivity(self, unit_key=None, percentile=True):
+        unit_key = {} if unit_key is None else unit_key
+        df = (dj.U(*minnie_nda.UnitSource.primary_key, "selectivity") & (
+            self.Unit & self & unit_key
+        ).proj(selectivity="osi")).fetch(format='frame').reset_index()
+        if percentile:
+            df['selectivity'] = df['selectivity'].rank(pct=True)
+        return df
 
 ## Aggregation tables
 @schema
@@ -219,6 +271,28 @@ class Orientation(djp.Lookup):
             unit_key = {} if unit_key is None else unit_key
             return (self.source & key).selectivity(unit_key=unit_key, percentile=percentile)
 
+    class DV231042(djp.Part):
+        _source = "OrientationDV231042"
+        source = eval(_source)
+        enable_hashing = True
+        hash_name = "orientation_hash"
+        hashed_attrs = source.primary_key
+        definition = """
+        #
+        -> master
+        ---
+        -> OrientationDV231042
+        """
+
+        def _pref_ori(self, key=None, unit_key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            unit_key = {} if unit_key is None else unit_key
+            return (self.source & key).pref_ori(unit_key=unit_key)
+
+        def _selectivity(self, key=None, unit_key=None, percentile=False):
+            key = self.fetch() if key is None else (self & key).fetch()
+            unit_key = {} if unit_key is None else unit_key
+            return (self.source & key).selectivity(unit_key=unit_key, percentile=percentile)
 
 @schema
 class OrientationScanInfo(djp.Computed):
@@ -331,6 +405,43 @@ class OracleDVScan1(djp.Manual):
             & (self.Unit & key)
         ).proj(oracle="statistic")
 
+@schema
+class OracleDVScan3(djp.Manual):
+    definition = """
+    # oracle value computed with dynamic vision scan v1
+    animal_id            : int                          # id number
+    scan_session         : smallint                     # session index for the mouse
+    scan_idx             : smallint                     # number of TIFF stack file
+    timing_id            : tinyint                      # align neural and stimulus timing
+    behavior_id          : tinyint                      # behavior resampling
+    response_id          : tinyint                      # neural response resampling
+    valid_id             : tinyint                      # neural response resampling
+    trial_group_hash     : varchar(256)                 # unique identifier for trial group grouping
+    downsample           : int unsigned                 # response downsampling
+    start_index          : int unsigned                 # index of first sampled response
+    statistic_type       : varchar(64)                  # statistic type
+    segmentation_method  : tinyint                      # segmentation method
+    pipe_version         : smallint                     # 
+    """
+
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        statistic       : float                         # statistic summarizing relationship between trial and oracle
+        """
+
+    def scan(self, key=None):
+        key = self.fetch('KEY') if key is None else (self & key).fetch('KEY')
+        return (self & key).fetch("animal_id", "scan_session", "scan_idx")
+
+    def oracle(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return (
+            dj.U(*minnie_nda.UnitSource.heading.primary_key, "statistic")
+            & (self.Unit & key)
+        ).proj(oracle="statistic")
 
 @schema
 class OracleTuneMovieOracle(djp.Manual):
@@ -405,7 +516,28 @@ class Oracle(djp.Lookup):
         def oracle(self, key=None):
             key = self.fetch() if key is None else (self & key).fetch()
             return (self.source & key).oracle()
+        
+    class DVScan3(djp.Part):
+        _source = "OracleDVScan3"
+        source = eval(_source)
+        enable_hashing = True
+        hash_name = "oracle_hash"
+        hashed_attrs = source.primary_key
+        definition = """
+        #
+        -> master
+        ---
+        -> OracleDVScan3
+        """
 
+        def scan(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).scan()
+
+        def oracle(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).oracle()
+    
     class TuneMovieOracle(djp.Part):
         _source = "OracleTuneMovieOracle"
         source = eval(_source)

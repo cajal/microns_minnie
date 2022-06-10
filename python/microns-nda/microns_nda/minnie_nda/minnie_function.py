@@ -224,6 +224,57 @@ class OrientationDV11521GD(minnie_function.OrientationDV11521GD, VMMixin):
             len_sec="sum(sec)",
         ).fetch1("len_sec")
 
+class OrientationDV231042(minnie_function.OrientationDV231042):
+    class Unit(minnie_function.OrientationDV11521GD.Unit):
+        pass
+    dv_scan = djp.create_djp_module('dv_scan', 'dv_scans_v3_scan')
+    dv_oracle = djp.create_djp_module('dv_oracle', 'dv_scans_v3_oracle')
+    dv_nns_scan = djp.create_djp_module('dv_nns_scan', 'dv_nns_v10_scan')
+    dv_direction = djp.create_djp_module('dv_direction', 'dv_tunings_v4_direction')
+
+    @classmethod
+    def fill(cls):
+        unit_rel = (
+            (cls.dv_scan.Unique().Neuron().proj(unique_unit_id='unit_id')  & 'animal_id=17797')
+            * cls.dv_scan.Unique().Unit() 
+            * cls.dv_direction.BiVonMises().proj(..., unique_unit_id='unit_id', bvm_mse='mse')
+            * cls.dv_direction.OSI.proj(..., unique_unit_id='unit_id')
+            * cls.dv_direction.DSI.proj(..., unique_unit_id='unit_id')
+            * cls.dv_direction.Uniform.proj(..., unique_unit_id='unit_id', uniform_mse='mse')
+        ).proj(..., scan_session='session')
+        master_rel = dj.U(*cls.primary_key) & unit_rel
+        cls.insert(master_rel, ignore_extra_fields=True, skip_duplicates=True)
+        cls.Unit.insert(unit_rel, ignore_extra_fields=True, skip_duplicates=True)
+
+    def stimulus_type(self, key=None):
+        # returns list of stimuli used in the tuning
+        # elements of the list are stimulus_type in the pipeline_stimulus.Condition table
+        key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
+        assert (self & key) * self.dv_direction.DirectionConfig.Mean() * self.dv_direction.DirectionResponseConfig().Nn10Monet2(), 'stimulus type not implemented'
+        return ['stimulus.Monet2',]
+
+    def response_type(self, key=None):
+        # returns {'in_vivo', 'in_silico'}
+        key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
+        assert (self & key) * self.dv_direction.DirectionConfig.Mean() * self.dv_direction.DirectionResponseConfig().Nn10Monet2(), 'response type not implemented'
+        return 'in_silico'
+
+    def scan(self, key=None):
+        key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
+        return (
+            (self & key).proj()
+        ).fetch1("animal_id", "scan_session", "scan_idx")
+
+    def len_sec(self, key=None):
+        key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
+        direction_stimulus_rel = (
+            (self & key) 
+            * self.dv_direction.DirectionConfig.Mean()
+            * self.dv_direction.DirectionResponseConfig().Nn10Monet2()
+            * self.dv_direction.DirectionStimulusConfig().Monet2()
+        )
+        assert direction_stimulus_rel, 'stimulus type not implemented!'
+        return direction_stimulus_rel.proj(sec='duration * n_rng_seeds').fetch1('sec')
 
 ## Aggregation tables
 class Orientation(minnie_function.Orientation):
@@ -264,6 +315,40 @@ class Orientation(minnie_function.Orientation):
         def fill(cls):
             constant_attrs = {
                 "orientation_type": Orientation.DV11521GD.__name__,
+            }
+            cls.insert(
+                cls.source,
+                insert_to_master=True,
+                constant_attrs=constant_attrs,
+                ignore_extra_fields=True,
+                skip_duplicates=True,
+            )
+
+        def stimulus_type(self, key=None):
+            key = self.fetch1() if key is None else (self & key).fetch1()
+            return (self.source & key).stimulus_type()
+
+        def response_type(self, key=None):
+            key = self.fetch1() if key is None else (self & key).fetch1()
+            return (self.source & key).response_type()
+
+        def scan(self, key=None):
+            key = self.fetch1() if key is None else (self & key).fetch1()
+            return (self.source & key).scan()
+
+        def len_sec(self, key=None):
+            key = self.fetch1() if key is None else (self & key).fetch1()
+            return (self.source & key).len_sec()
+        
+    class DV231042(minnie_function.Orientation.DV231042):
+        @classproperty
+        def source(cls):
+            return eval(super()._source)
+
+        @classmethod
+        def fill(cls):
+            constant_attrs = {
+                "orientation_type": Orientation.DV231042.__name__,
             }
             cls.insert(
                 cls.source,
@@ -386,6 +471,27 @@ class OracleDVScan1(minnie_function.OracleDVScan1, VMMixin):
                 ignore_extra_fields=True,
             )
 
+class OracleDVScan3(minnie_function.OracleDVScan3):
+
+    dv_oracle = djp.create_djp_module('dv_oracle', 'dv_scans_v3_oracle')
+
+    class Unit(minnie_function.OracleDVScan3.Unit):
+        pass
+
+    @classmethod
+    def fill(cls):
+        keys = minnie_nda.Scan.fetch("KEY")
+        master_rel = dj.U(*cls.primary_key) & cls.dv_oracle.TrialVsOracle.Unit.proj(..., scan_session="session")
+        for k in (master_rel & keys):
+            with cls.connection.transaction:
+                cls.insert1(k, skip_duplicates=True, ignore_extra_fields=True)
+                cls.Unit.insert(
+                    (cls.dv_oracle.TrialVsOracle.Unit.proj(..., scan_session="session") & k)
+                    .fetch(),
+                    skip_duplicates=True,
+                    ignore_extra_fields=True,
+                )
+
 
 class OracleTuneMovieOracle(minnie_function.OracleTuneMovieOracle, VMMixin):
 
@@ -434,6 +540,25 @@ class Oracle(minnie_function.Oracle):
                 insert_to_master=True,
                 constant_attrs=constant_attrs,
                 ignore_extra_fields=True,
+                skip_duplicates=True,
+            )
+
+    class DVScan3(minnie_function.Oracle.DVScan3):
+        @classproperty
+        def source(cls):
+            return eval(super()._source)
+
+        @classmethod
+        def fill(cls):
+            constant_attrs = {
+                "oracle_type": cls.source.__name__,
+            }
+            cls.insert(
+                cls.source,
+                insert_to_master=True,
+                constant_attrs=constant_attrs,
+                ignore_extra_fields=True,
+                skip_duplicates=True,
             )
 
     class TuneMovieOracle(minnie_function.Oracle.TuneMovieOracle):
@@ -451,6 +576,7 @@ class Oracle(minnie_function.Oracle):
                 insert_to_master=True,
                 constant_attrs=constant_attrs,
                 ignore_extra_fields=True,
+                skip_duplicates=True,
             )
 
 
@@ -478,7 +604,7 @@ class OracleScanSet(minnie_function.OracleScanSet):
         )
         # check all members of a set share the same oracle_type
         assert (
-            len(dj.U("oracle_type") & (OracleScanInfo & keys)) == 1
+            len(dj.U("oracle_type") & (Oracle & keys)) == 1
         ), "All members of a set must share the same oracle_type"
         scan_keys = (minnie_nda.Scan & (OracleScanInfo & keys)).fetch("KEY")
         scan_set_hash = ScanSet.add_hash_to_rows(scan_keys)[ScanSet.hash_name].unique()[
