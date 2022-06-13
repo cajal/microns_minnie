@@ -202,7 +202,7 @@ class OrientationDV231042(djp.Manual):
         unit_df = (dj.U(*minnie_nda.UnitSource.primary_key, "pref_ori") & (
             self.Unit & self & unit_key
         ).proj(pref_ori="mu")).fetch(format='frame').reset_index()
-        unit_df['pref_ori'] = unit_df['pref_ori'] % np.pi
+        unit_df['pref_ori'] = (-unit_df['pref_ori'] + np.pi/2) % np.pi  # convert to clock convention (horizontal bar moving upward is 0 and orientation increases clockwise)
         return unit_df
 
     def selectivity(self, unit_key=None, percentile=True):
