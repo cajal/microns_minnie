@@ -4,6 +4,7 @@ import numpy as np
 
 from . import minnie_nda
 from ..config import minnie_function_config as config
+from .utils import pcorr
 
 config.register_externals()
 config.register_adapters(context=locals())
@@ -367,6 +368,24 @@ class OrientationScanSet(djp.Lookup):
             unit_key=unit_key, percentile=percentile
         )
 
+@schema
+class OrientationFilter(djp.Lookup):
+    definition = """
+    ori_filter_id           : int           # id for an orientation filter
+    ---
+    note                    : varchar(128)  # note for the orientation filter
+    """
+    contents = [
+        [1, 'horizontal cardinal (phi < pi/4 or pi >= pi*3/4)'],
+        [2, 'vertical cardinal (pi/4 <= phi < pi*3/4)']
+    ]
+
+    def get_filter(self, key=None):
+        key = self.fetch1() if key is None else (self & key).fetch1()
+        if key['ori_filter_id'] == 1:
+            return lambda x: x < np.pi/4 or np.pi*3/4 <= x
+        elif key['ori_filter_id'] == 2:
+            return lambda x: np.pi/4 <= x and x < np.pi*3/4
 
 # Oracle
 ## Faithful copy of data
@@ -653,6 +672,44 @@ class DynamicModel(djp.Lookup, MakerMixin):
         ro_y                 : float                        # readout y coordinate
         ro_weight            : longblob                     # readout weight, [head, feature]
         """
+    
+    class NnsV10ScanV3Unique(djp.Part):
+        definition = """
+        # dynamic model saved in `dv_nns_v5_scan.__scan_model`
+        -> master
+        ---
+        scan_hash            : varchar(256)                 # configuration of scan dataset
+        nn_hash              : varchar(256)                 # configuration of neural network
+        instance_hash        : varchar(128)                 # nn instance configuration
+        unique_id            : varchar(128)                 # unique unit parameters
+        """
+        enable_hashing = True
+        hash_name = "dynamic_model_hash"
+        hashed_attrs = [
+            "scan_hash",
+            "nn_hash",
+            "instance_hash",
+            "unique_id",
+            "animal_id",
+            "scan_session",
+            "scan_idx",
+            "dynamic_model_type",
+        ]
+
+        def readout(self, part_key=None):
+            part_key = {} if part_key is None else part_key
+            return DynamicModel.NnsV10ScanV3UniqueUnitReadout & self & part_key
+
+    class NnsV10ScanV3UniqueUnitReadout(djp.Part):
+        definition = """
+        # readout saved in `dv_nns_v10_scan.__readout`
+        -> DynamicModel.NnsV10ScanV3Unique
+        -> minnie_nda.UnitSource
+        ---
+        ro_x                 : float                        # readout x coordinate
+        ro_y                 : float                        # readout y coordinate
+        ro_weight            : longblob                     # readout weight, [head, feature]
+        """
 
 
 @schema
@@ -707,6 +764,37 @@ class DynamicModelScore(djp.Lookup, MakerMixin):
         statistic            : float                        # statistic summarizing relationship between scan and behavioral model responses
         """
 
+    class NnsV10ScanV3Unique(djp.Part):
+        definition = """
+        # Predictive model performance and parameters
+        -> master
+        ---
+        trial_group_hash       : varchar(256)                 # policy for defining groups of stimulus slices
+        behavior_hash          : varchar(256)                 # nn behavior configuration
+        eye_position           : bool                         # use eye position data
+        behavior               : bool                         # use behavioral data
+        statistic_type         : varchar(64)                  # statistic type
+        """
+        enable_hashing = True
+        hash_name = "dynamic_score_hash"
+        hashed_attrs = [
+            "trial_group_hash",
+            "statistic_type",
+            "behavior_hash",
+            "dynamic_score_type",
+        ]
+
+        def unit_score(self, part_key=None):
+            part_key = {} if part_key is None else part_key
+            return (DynamicModelScore.NnsV10ScanV3UniqueUnitScore * self) & part_key
+
+    class NnsV10ScanV3UniqueUnitScore(djp.Part):
+        definition = """
+        -> DynamicModelScore.NnsV10ScanV3Unique
+        -> minnie_nda.UnitSource
+        ---
+        statistic            : float                        # statistic summarizing relationship between scan and behavioral model responses
+        """
 
 @schema
 class DynamicModelScanSet(djp.Lookup):
@@ -733,43 +821,76 @@ class DynamicModelScanSet(djp.Lookup):
         """
 
     def readout(self, part_key=None):
-        master_key = (DynamicModel & self.Member().proj()).proj().fetch()
+        master_key = (DynamicModel & (self.Member().proj() & self.proj())).proj().fetch()
         return (DynamicModel & master_key).readout(part_key)
 
     def unit_score(self, part_key=None):
-        master_key = (DynamicModel & self.Member().proj()).proj().fetch()
+        master_key = (DynamicModel & (self.Member().proj() & self.proj())).proj().fetch()
         return (DynamicModelScore & master_key).unit_score(part_key)
 
 # WIP
-# @schema
-# class DynamicModelRespCorr(djp.Manual):
-#     definition = '''
-#     # response correlation matrix
-#     -> DynamicModelScanSet
-#     dynamic_resp_corr_hash : varchar(32)
-#     ---
-#     n_neuron               : int                # number of neurons
-#     description            : varchar(256)       # description of the response correlation matrix
-#     '''
-
-#     class DVManual(djp.Manual):
-#         definition = '''
-#         # response correlation matrices computed manually in dynamic_vision environment 
-#         -> master
-#         ---
-#         script_gh_link     : varchar(256)       # link to script for replicating the response matrix
-#         resp_corr_matrix   : 
-#         '''
+@schema
+class RespArrNnsV10(djp.Manual):
+    definition = """
+    resp_array_idx          : int unsigned
+    ---
+    -> DynamicModelScanSet
+    resp_array              : blob@resp_array
+    description             : varchar(255)          # description of the response array
+    """
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        row_idx             : int unsigned          # row index in the response array
+        """
     
-#     class DVManualUnit(djp.Manual):
-#         definition = """
-#         # unit identity of each dimension in the response correlation matrices
-#         -> master
-#         corr_matrix_idx    : int unsigned       # index of the unit in the response correlation matrix
-#         ---
-#         -> minnie_nda.UnitSource
-#         """
+    class Condition(djp.Part):
+        stimulus = djp.create_djp_module('pipeline_stimulus', 'pipeline_stimulus')
+        definition = """
+        -> master
+        -> djp.create_djp_module('pipeline_stimulus', 'pipeline_stimulus').Condition
+        ---
+        col_idx_start             : int unsigned     # start index of the condition in the response array
+        col_idx_end               : int unsigned     # end index of the condition in the response array
+        """
+    
 
+@schema
+class RespCorr(djp.Lookup):
+    hash_part_table_names = True
+    hash_name = "resp_corr_hash"
+    definition = """
+    resp_corr_hash                  : varchar(32)
+    ---
+    -> ScanSet
+    resp_corr_type                  : varchar(48)
+    resp_corr_ts=CURRENT_TIMESTAMP  : timestamp
+    """
+
+    class RespArrNnsV10(djp.Part):
+        definition = """
+        -> master
+        ---
+        -> RespArrNnsV10
+        """
+        enable_hashing = True
+        hash_name = "resp_corr_hash"
+        hashed_attrs = [
+            "resp_array_idx",
+        ]
+
+        def get_corr(self, unit_df1, unit_df2):
+            unit_df = (RespArrNnsV10.Unit & self).fetch(format='frame').reset_index()
+            row_idx1 = unit_df1.merge(unit_df, how='left')[['row_idx']].values.squeeze()
+            row_idx2 = unit_df2.merge(unit_df, how='left')[['row_idx']].values.squeeze()    
+            assert not np.isnan(row_idx1).any() or not np.isnan(row_idx2).any(), "units not found in the response array"
+            resp_array = (RespArrNnsV10 & self).fetch1('resp_array')
+            return pcorr(resp_array[row_idx1,:], resp_array[row_idx2,:])
+
+    def get_corr(self, unit_df1, unit_df2):
+        return self.r1p(self).get_corr(unit_df1, unit_df2)
 
 
 
