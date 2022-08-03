@@ -4,7 +4,7 @@ import numpy as np
 
 from . import minnie_nda
 from ..config import minnie_function_config as config
-from .utils import pcorr
+from ..utils.function_utils import pcorr
 
 config.register_externals()
 config.register_adapters(context=locals())
