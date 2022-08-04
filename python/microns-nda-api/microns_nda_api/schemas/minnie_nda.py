@@ -6,7 +6,8 @@ from ..config import minnie_nda_config as config
 config.register_externals()
 config.register_adapters(context=locals())
 
-schema = djp.schema(config.schema_name, create_schema=True)
+schema = dj.schema(config.schema_name, create_schema=True)
+schema.connection.dependencies.load()
 
 @schema
 class Animal(djp.Lookup):
