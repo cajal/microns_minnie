@@ -31,8 +31,8 @@ def pcorr(x, y):
     Returns:
         cross_correlation_matrix: 2D numpy array， (n_features, n_features)
     """
-    x = np.array(x, dtype=np.float64)
-    y = np.array(y, dtype=np.float64)
+    x = np.atleast_2d(np.array(x, dtype=np.float64))
+    y = np.atleast_2d(np.array(y, dtype=np.float64))
     assert x.shape[1] == y.shape[1] and x.ndim == y.ndim == 2
     x = x - x.mean(axis=1, keepdims=True)
     y = y - y.mean(axis=1, keepdims=True)
