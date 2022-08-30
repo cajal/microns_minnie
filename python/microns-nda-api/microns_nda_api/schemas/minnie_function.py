@@ -4,7 +4,7 @@ import numpy as np
 
 from . import minnie_nda
 from ..config import minnie_function_config as config
-from ..utils.function_utils import pcorr
+from ..utils.function_utils import pcorr, xcorr
 
 config.register_externals()
 config.register_adapters(context=locals())
@@ -882,13 +882,32 @@ class RespCorr(djp.Lookup):
             "resp_array_idx",
         ]
 
+        def get_resp_array(self):
+            key = self.fetch1('KEY')
+            if not (hasattr(self.__class__, '_cache_key') and self.__class__._cache_key == key):
+                self.__class__._cache_key = key
+                self.__class__._cache_resp_array = (RespArrNnsV10 & self).fetch1('resp_array')
+            return self.__class__._cache_resp_array
+
+        def get_resp(self, unit_df):
+            unit_index_df = (RespArrNnsV10.Unit & self).fetch(format='frame').reset_index()
+            resp_array = self.get_resp_array()
+            row_idx = unit_df.merge(unit_index_df, how='left')[['row_idx']].values.squeeze()
+            return resp_array[row_idx,:]
+
         def get_corr(self, unit_df1, unit_df2):
-            unit_df = (RespArrNnsV10.Unit & self).fetch(format='frame').reset_index()
-            row_idx1 = unit_df1.merge(unit_df, how='left')[['row_idx']].values.squeeze()
-            row_idx2 = unit_df2.merge(unit_df, how='left')[['row_idx']].values.squeeze()    
-            assert not np.isnan(row_idx1).any() or not np.isnan(row_idx2).any(), "units not found in the response array"
-            resp_array = (RespArrNnsV10 & self).fetch1('resp_array')
-            return pcorr(resp_array[row_idx1,:], resp_array[row_idx2,:])
+            # unit_df = (RespArrNnsV10.Unit & self).fetch(format='frame').reset_index()
+            # row_idx1 = unit_df1.merge(unit_df, how='left')[['row_idx']].values.squeeze()
+            # row_idx2 = unit_df2.merge(unit_df, how='left')[['row_idx']].values.squeeze()    
+            # assert not np.isnan(row_idx1).any() or not np.isnan(row_idx2).any(), "units not found in the response array"
+            resp_array = self.get_resp_array()
+            resp_1 = self.get_resp(unit_df1)
+            resp_2 = self.get_resp(unit_df2)
+            return pcorr(resp_1, resp_2)
+        
+        def get_xcorr(self, unit_df):
+            resp = self.get_resp(unit_df)
+            return xcorr(resp)
 
     def get_corr(self, unit_df1, unit_df2):
         return self.r1p(self).get_corr(unit_df1, unit_df2)
