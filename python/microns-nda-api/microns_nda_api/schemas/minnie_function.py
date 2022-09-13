@@ -1,6 +1,7 @@
 import datajoint as dj
 import datajoint_plus as djp
 import numpy as np
+from tqdm import tqdm
 
 from . import minnie_nda
 from ..config import minnie_function_config as config
@@ -215,6 +216,13 @@ class OrientationDV231042(djp.Manual):
         if percentile:
             df['selectivity'] = df['selectivity'].rank(pct=True)
         return df
+
+    def tuning(self, unit_key=None, convention='ori'):
+        tuning_dir = djp.create_djp_module('dv_tunings_v4_direction', 'dv_tunings_v4_direction')
+        unit_direction_df = (tuning_dir.DirectionResponse.Unit * tuning_dir.DirectionConfig.Mean& self & unit_key).fetch(format='frame').reset_index()
+        unit_df = unit_direction_df.groupby(['session', 'scan_idx', 'unit_id']).apply(lambda df : df.sort_values('direction').direction.values).to_frame(name='direction')
+        unit_df['response_mean'] = unit_direction_df.groupby(['session', 'scan_idx', 'unit_id']).apply(lambda df : df.sort_values('direction').response_mean.values).to_frame()
+        return unit_df
 
 ## Aggregation tables
 @schema
@@ -895,15 +903,22 @@ class RespCorr(djp.Lookup):
             row_idx = unit_df.merge(unit_index_df, how='left')[['row_idx']].values.squeeze()
             return resp_array[row_idx,:]
 
-        def get_corr(self, unit_df1, unit_df2):
+        def get_corr(self, unit_df1, unit_df2, max_batch_size=100_000):
             # unit_df = (RespArrNnsV10.Unit & self).fetch(format='frame').reset_index()
             # row_idx1 = unit_df1.merge(unit_df, how='left')[['row_idx']].values.squeeze()
             # row_idx2 = unit_df2.merge(unit_df, how='left')[['row_idx']].values.squeeze()    
             # assert not np.isnan(row_idx1).any() or not np.isnan(row_idx2).any(), "units not found in the response array"
-            resp_array = self.get_resp_array()
-            resp_1 = self.get_resp(unit_df1)
-            resp_2 = self.get_resp(unit_df2)
-            return pcorr(resp_1, resp_2)
+            assert len(unit_df1) == len(unit_df2), "unit_df1 and unit_df2 must have the same length"
+            corr = []
+            unit_df1_batch = np.array_split(unit_df1, np.ceil(len(unit_df1)/max_batch_size))
+            unit_df2_batch = np.array_split(unit_df2, np.ceil(len(unit_df2)/max_batch_size))
+            for _unit_df1, _unit_df2 in zip(tqdm(unit_df1_batch, desc='batch'), unit_df2_batch):
+                resp_1 = self.get_resp(_unit_df1)
+                resp_2 = self.get_resp(_unit_df2)
+                corr.append(pcorr(resp_1, resp_2))
+            corr = np.concatenate(corr)
+            assert len(corr) == len(unit_df1)
+            return corr
         
         def get_xcorr(self, unit_df):
             resp = self.get_resp(unit_df)
