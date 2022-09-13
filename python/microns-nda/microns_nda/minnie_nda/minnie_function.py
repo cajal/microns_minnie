@@ -5,6 +5,7 @@ import pandas as pd
 from tqdm import tqdm
 from datajoint_plus.utils import classproperty
 from microns_nda_api.schemas import minnie_function, minnie_nda
+import logging
 
 # Utility functions
 class VMMixin:
@@ -225,6 +226,75 @@ class OrientationDV11521GD(minnie_function.OrientationDV11521GD, VMMixin):
         ).fetch1("len_sec")
 
 
+class OrientationDV231042(minnie_function.OrientationDV231042):
+    class Unit(minnie_function.OrientationDV11521GD.Unit):
+        pass
+
+    dv_scan = djp.create_djp_module("dv_scan", "dv_scans_v3_scan")
+    dv_oracle = djp.create_djp_module("dv_oracle", "dv_scans_v3_oracle")
+    dv_nns_scan = djp.create_djp_module("dv_nns_scan", "dv_nns_v10_scan")
+    dv_direction = djp.create_djp_module("dv_direction", "dv_tunings_v4_direction")
+
+    @classmethod
+    def fill(cls):
+        unit_rel = (
+            (
+                cls.dv_scan.Unique().Neuron().proj(unique_unit_id="unit_id")
+                & "animal_id=17797"
+            )
+            * cls.dv_scan.Unique().Unit()
+            * cls.dv_direction.BiVonMises().proj(
+                ..., unique_unit_id="unit_id", bvm_mse="mse"
+            )
+            * cls.dv_direction.OSI.proj(..., unique_unit_id="unit_id")
+            * cls.dv_direction.DSI.proj(..., unique_unit_id="unit_id")
+            * cls.dv_direction.Uniform.proj(
+                ..., unique_unit_id="unit_id", uniform_mse="mse"
+            )
+        ).proj(..., scan_session="session")
+        master_rel = dj.U(*cls.primary_key) & unit_rel
+        cls.insert(master_rel, ignore_extra_fields=True, skip_duplicates=True)
+        cls.Unit.insert(unit_rel, ignore_extra_fields=True, skip_duplicates=True)
+
+    def stimulus_type(self, key=None):
+        # returns list of stimuli used in the tuning
+        # elements of the list are stimulus_type in the pipeline_stimulus.Condition table
+        key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
+        assert (
+            (self & key)
+            * self.dv_direction.DirectionConfig.Mean()
+            * self.dv_direction.DirectionResponseConfig().Nn10Monet2()
+        ), "stimulus type not implemented"
+        return [
+            "stimulus.Monet2",
+        ]
+
+    def response_type(self, key=None):
+        # returns {'in_vivo', 'in_silico'}
+        key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
+        assert (
+            (self & key)
+            * self.dv_direction.DirectionConfig.Mean()
+            * self.dv_direction.DirectionResponseConfig().Nn10Monet2()
+        ), "response type not implemented"
+        return "in_silico"
+
+    def scan(self, key=None):
+        key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
+        return ((self & key).proj()).fetch1("animal_id", "scan_session", "scan_idx")
+
+    def len_sec(self, key=None):
+        key = self.fetch1("KEY") if key is None else (self & key).fetch1("KEY")
+        direction_stimulus_rel = (
+            (self & key)
+            * self.dv_direction.DirectionConfig.Mean()
+            * self.dv_direction.DirectionResponseConfig().Nn10Monet2()
+            * self.dv_direction.DirectionStimulusConfig().Monet2()
+        )
+        assert direction_stimulus_rel, "stimulus type not implemented!"
+        return direction_stimulus_rel.proj(sec="duration * n_rng_seeds").fetch1("sec")
+
+
 ## Aggregation tables
 class Orientation(minnie_function.Orientation):
     @classmethod
@@ -264,6 +334,40 @@ class Orientation(minnie_function.Orientation):
         def fill(cls):
             constant_attrs = {
                 "orientation_type": Orientation.DV11521GD.__name__,
+            }
+            cls.insert(
+                cls.source,
+                insert_to_master=True,
+                constant_attrs=constant_attrs,
+                ignore_extra_fields=True,
+                skip_duplicates=True,
+            )
+
+        def stimulus_type(self, key=None):
+            key = self.fetch1() if key is None else (self & key).fetch1()
+            return (self.source & key).stimulus_type()
+
+        def response_type(self, key=None):
+            key = self.fetch1() if key is None else (self & key).fetch1()
+            return (self.source & key).response_type()
+
+        def scan(self, key=None):
+            key = self.fetch1() if key is None else (self & key).fetch1()
+            return (self.source & key).scan()
+
+        def len_sec(self, key=None):
+            key = self.fetch1() if key is None else (self & key).fetch1()
+            return (self.source & key).len_sec()
+
+    class DV231042(minnie_function.Orientation.DV231042):
+        @classproperty
+        def source(cls):
+            return eval(super()._source)
+
+        @classmethod
+        def fill(cls):
+            constant_attrs = {
+                "orientation_type": Orientation.DV231042.__name__,
             }
             cls.insert(
                 cls.source,
@@ -356,6 +460,7 @@ class OrientationScanSet(minnie_function.OrientationScanSet):
             insert_to_parts_kws={"skip_duplicates": True, "ignore_extra_fields": True},
         )
 
+
 # Oracle
 ## Faithful copy of data
 class OracleDVScan1(minnie_function.OracleDVScan1, VMMixin):
@@ -385,6 +490,34 @@ class OracleDVScan1(minnie_function.OracleDVScan1, VMMixin):
                 skip_duplicates=True,
                 ignore_extra_fields=True,
             )
+
+
+class OracleDVScan3(minnie_function.OracleDVScan3):
+
+    dv_oracle = djp.create_djp_module("dv_oracle", "dv_scans_v3_oracle")
+
+    class Unit(minnie_function.OracleDVScan3.Unit):
+        pass
+
+    @classmethod
+    def fill(cls):
+        keys = minnie_nda.Scan.fetch("KEY")
+        master_rel = dj.U(*cls.primary_key) & cls.dv_oracle.TrialVsOracle.Unit.proj(
+            ..., scan_session="session"
+        )
+        for k in master_rel & keys:
+            with cls.connection.transaction:
+                cls.insert1(k, skip_duplicates=True, ignore_extra_fields=True)
+                cls.Unit.insert(
+                    (
+                        cls.dv_oracle.TrialVsOracle.Unit.proj(
+                            ..., scan_session="session"
+                        )
+                        & k
+                    ).fetch(),
+                    skip_duplicates=True,
+                    ignore_extra_fields=True,
+                )
 
 
 class OracleTuneMovieOracle(minnie_function.OracleTuneMovieOracle, VMMixin):
@@ -434,6 +567,25 @@ class Oracle(minnie_function.Oracle):
                 insert_to_master=True,
                 constant_attrs=constant_attrs,
                 ignore_extra_fields=True,
+                skip_duplicates=True,
+            )
+
+    class DVScan3(minnie_function.Oracle.DVScan3):
+        @classproperty
+        def source(cls):
+            return eval(super()._source)
+
+        @classmethod
+        def fill(cls):
+            constant_attrs = {
+                "oracle_type": cls.source.__name__,
+            }
+            cls.insert(
+                cls.source,
+                insert_to_master=True,
+                constant_attrs=constant_attrs,
+                ignore_extra_fields=True,
+                skip_duplicates=True,
             )
 
     class TuneMovieOracle(minnie_function.Oracle.TuneMovieOracle):
@@ -451,6 +603,7 @@ class Oracle(minnie_function.Oracle):
                 insert_to_master=True,
                 constant_attrs=constant_attrs,
                 ignore_extra_fields=True,
+                skip_duplicates=True,
             )
 
 
@@ -478,7 +631,7 @@ class OracleScanSet(minnie_function.OracleScanSet):
         )
         # check all members of a set share the same oracle_type
         assert (
-            len(dj.U("oracle_type") & (OracleScanInfo & keys)) == 1
+            len(dj.U("oracle_type") & (Oracle & keys)) == 1
         ), "All members of a set must share the same oracle_type"
         scan_keys = (minnie_nda.Scan & (OracleScanInfo & keys)).fetch("KEY")
         scan_set_hash = ScanSet.add_hash_to_rows(scan_keys)[ScanSet.hash_name].unique()[
@@ -500,6 +653,14 @@ class OracleScanSet(minnie_function.OracleScanSet):
 # # Predictive model performance and parameters
 ## Aggregation tables
 class DynamicModel(minnie_function.DynamicModel):
+
+    @classmethod
+    def fill(cls):
+        for p in cls.parts(as_cls=True):
+            if hasattr(p, "fill"):
+                logging.info('Filling "{}"'.format(p.__name__))
+                p.fill()
+
     class NnsV5(minnie_function.DynamicModel.NnsV5, VMMixin):
         virtual_module_dict = {
             "dv_nns_v5_scan": "dv_nns_v5_scan",
@@ -510,14 +671,12 @@ class DynamicModel(minnie_function.DynamicModel):
             cls.spawn_virtual_modules(cls.virtual_module_dict)
             keys = minnie_nda.Scan.fetch("KEY")
             scan_keys = (
-                (
-                    cls.virtual_modules["dv_nns_v5_scan"].Readout.proj(
-                        ..., scan_session="session"
-                    )
-                    & keys
+                cls.virtual_modules["dv_nns_v5_scan"].Readout.proj(
+                    ..., scan_session="session"
                 )
-                .fetch(as_dict=True)
-            )
+                - cls
+                & keys
+            ).fetch(as_dict=True)
             for scan_key in scan_keys:
                 cls.insert1(
                     scan_key,
@@ -526,11 +685,15 @@ class DynamicModel(minnie_function.DynamicModel):
                     ignore_extra_fields=True,
                 )
                 unit_keys = (
-                    cls.virtual_modules["dv_nns_v5_scan"].Readout.Unit.proj(
-                        ..., scan_session="session"
+                    (
+                        cls.virtual_modules["dv_nns_v5_scan"].Readout.Unit.proj(
+                            ..., scan_session="session"
+                        )
+                        & scan_key
                     )
-                    & scan_key
-                ).fetch(format='frame').reset_index()
+                    .fetch(format="frame")
+                    .reset_index()
+                )
                 unit_keys = cls.add_hash_to_rows(unit_keys)
                 DynamicModel.NnsV5UnitReadout.insert(
                     unit_keys,
@@ -538,15 +701,66 @@ class DynamicModel(minnie_function.DynamicModel):
                     ignore_extra_fields=True,
                 )
 
-    class NnsV5UnitReadout(minnie_function.DynamicModel.NnsV5UnitReadout): pass
+    class NnsV5UnitReadout(minnie_function.DynamicModel.NnsV5UnitReadout):
+        pass
 
-    @classmethod
-    def fill(cls):
-        for p in cls.parts(as_cls=True):
-            try:
-                p.fill()
-            except AttributeError:
-                pass
+    class NnsV10ScanV3Unique(minnie_function.DynamicModel.NnsV10ScanV3Unique, VMMixin):
+        virtual_module_dict = {
+            "dv_nns_v10_scan": "dv_nns_v10_scan",
+            "dv_scans_v3_scan_dataset": "dv_scans_v3_scan_dataset",
+            "dv_scans_v3_scan": "dv_scans_v3_scan",
+        }
+
+        @classmethod
+        def fill(cls):
+            cls.spawn_virtual_modules(cls.virtual_module_dict)
+            keys = minnie_nda.Scan.fetch("KEY")
+            scan_keys = (
+                (
+                    cls.virtual_modules["dv_nns_v10_scan"].Readout
+                    - cls.proj(session='scan_session')
+                    & keys
+                )
+                * cls.virtual_modules["dv_nns_v10_scan"].ScanConfig.Scan3
+                * cls.virtual_modules["dv_scans_v3_scan_dataset"].Dataset
+                * cls.virtual_modules["dv_scans_v3_scan_dataset"]
+                .UnitConfig()
+                .Unique()
+            ).proj(..., scan_session='session').fetch(as_dict=True)
+            logging.info(f'Found {len(scan_keys)} models to insert!')
+            for scan_key in scan_keys:
+                with dj.conn().transaction:
+                    cls.insert1(
+                        scan_key,
+                        insert_to_master=True,
+                        constant_attrs={"dynamic_model_type": cls.__name__},
+                        ignore_extra_fields=True,
+                    )
+                    unit_keys = (
+                        (
+                            (
+                                cls.virtual_modules["dv_nns_v10_scan"].Readout.Unit.proj(..., unique_unit_id='unit_id')
+                                * cls.virtual_modules["dv_scans_v3_scan"].Unique.Neuron.proj(..., unique_unit_id='unit_id')
+                                * cls.virtual_modules["dv_scans_v3_scan"].Unique.Unit
+                            ).proj(
+                                ..., scan_session="session"
+                            )
+                            & scan_key
+                        )
+                        .fetch(format="frame")
+                        .reset_index()
+                    )
+                    unit_keys["dynamic_model_type"] = cls.__name__
+                    unit_keys = cls.add_hash_to_rows(unit_keys)
+                    DynamicModel.NnsV10ScanV3UniqueUnitReadout.insert(
+                        unit_keys,
+                        ignore_extra_fields=True,
+                    )
+
+    class NnsV10ScanV3UniqueUnitReadout(
+        minnie_function.DynamicModel.NnsV10ScanV3UniqueUnitReadout
+    ):
+        pass
 
 
 class DynamicModelScore(minnie_function.DynamicModelScore):
@@ -558,18 +772,19 @@ class DynamicModelScore(minnie_function.DynamicModelScore):
 
         @classmethod
         def fill(cls, key=None):
-            model_maker = (DynamicModel & f"dynamic_model_type='{cls.__name__}'").maker()
+            model_maker = (
+                DynamicModel & f"dynamic_model_type='{cls.__name__}'"
+            ).maker()
             model_maker = model_maker if key is None else (model_maker & key)
             cls.spawn_virtual_modules(cls.virtual_module_dict)
             scan_keys = (
                 (
-                    (
-                        cls.virtual_modules["dv_nns_v5_scan"].TrialVsModel
-                        * cls.virtual_modules["dv_nns_v5_model"].BehaviorConfig.Scan
-                    ).proj(..., scan_session="session")
-                    * model_maker
-                )
-                .fetch(as_dict=True)
+                    cls.virtual_modules["dv_nns_v5_scan"].TrialVsModel
+                    * cls.virtual_modules["dv_nns_v5_model"].BehaviorConfig.Scan
+                ).proj(..., scan_session="session")
+                * model_maker - cls.proj()
+            ).fetch(
+                as_dict=True
             )  # 8 sec
             for scan_key in tqdm(scan_keys):
                 cls.insert1(
@@ -579,14 +794,16 @@ class DynamicModelScore(minnie_function.DynamicModelScore):
                     ignore_extra_fields=True,
                 )
                 unit_keys = (
-                (
                     (
-                        cls.virtual_modules["dv_nns_v5_scan"].TrialVsModel.Unit
-                        * cls.virtual_modules["dv_nns_v5_model"].BehaviorConfig.Scan
-                    ).proj(..., scan_session="session") * model_maker
-                    & scan_key
-                )
-                .fetch(format='frame').reset_index()
+                        (
+                            cls.virtual_modules["dv_nns_v5_scan"].TrialVsModel.Unit
+                            * cls.virtual_modules["dv_nns_v5_model"].BehaviorConfig.Scan
+                        ).proj(..., scan_session="session")
+                        * model_maker
+                        & scan_key
+                    )
+                    .fetch(format="frame")
+                    .reset_index()
                 )
                 unit_keys = cls.add_hash_to_rows(unit_keys)
                 DynamicModelScore.NnsV5UnitScore.insert(
@@ -594,16 +811,73 @@ class DynamicModelScore(minnie_function.DynamicModelScore):
                     constant_attrs={"dynamic_model_type": cls.__name__},
                     ignore_extra_fields=True,
                 )
-            
-    class NnsV5UnitScore(minnie_function.DynamicModelScore.NnsV5UnitScore): pass
+
+    class NnsV5UnitScore(minnie_function.DynamicModelScore.NnsV5UnitScore):
+        pass
+
+    class NnsV10ScanV3Unique(minnie_function.DynamicModelScore.NnsV10ScanV3Unique, VMMixin):
+        virtual_module_dict = {
+            "dv_nns_v10_scan": "dv_nns_v10_scan",
+            "dv_scans_v3_scan_dataset": "dv_scans_v3_scan_dataset",
+            "dv_scans_v3_scan": "dv_scans_v3_scan",
+            "dv_nns_v10_model": "dv_nns_v10_model",
+        }
+
+        @classmethod
+        def fill(cls, key=None):
+            model_maker = (
+                DynamicModel & f"dynamic_model_type='{cls.__name__}'"
+            ).maker()
+            model_maker = model_maker if key is None else (model_maker & key)
+            cls.spawn_virtual_modules(cls.virtual_module_dict)
+            scan_keys = (
+                (
+                    cls.virtual_modules["dv_nns_v10_scan"].TrialVsModel
+                    * cls.virtual_modules["dv_nns_v10_model"].BehaviorConfig.Scan
+                ).proj(..., scan_session="session")
+                * model_maker - cls.proj()
+            ).fetch(
+                as_dict=True
+            )
+            for scan_key in tqdm(scan_keys):
+                with dj.conn().transaction:
+                    cls.insert1(
+                        scan_key,
+                        insert_to_master=True,
+                        constant_attrs={"dynamic_score_type": cls.__name__},
+                        ignore_extra_fields=True,
+                    )
+                    unit_keys = (
+                        (
+                            (
+                                cls.virtual_modules["dv_nns_v10_scan"].TrialVsModel.Unit.proj(..., unique_unit_id='unit_id')
+                                * cls.virtual_modules["dv_nns_v10_model"].BehaviorConfig.Scan
+                                * cls.virtual_modules["dv_scans_v3_scan"].Unique.Neuron.proj(..., unique_unit_id='unit_id')
+                                * cls.virtual_modules["dv_scans_v3_scan"].Unique.Unit
+                            ).proj(..., scan_session="session")
+                            * model_maker
+                            & scan_key
+                        )
+                        .fetch(format="frame")
+                        .reset_index()
+                    )
+                    unit_keys['dynamic_score_type'] = cls.__name__
+                    unit_keys = cls.add_hash_to_rows(unit_keys)
+                    DynamicModelScore.NnsV10ScanV3UniqueUnitScore.insert(
+                        unit_keys,
+                        ignore_extra_fields=True,
+                    )
+
+    class NnsV10ScanV3UniqueUnitScore(
+        minnie_function.DynamicModelScore.NnsV10ScanV3UniqueUnitScore
+    ):
+        pass
 
     @classmethod
     def fill(cls):
         for p in cls.parts(as_cls=True):
-            try:
+            if hasattr(p, "fill"):
                 p.fill()
-            except AttributeError:
-                pass
 
 
 class DynamicModelScanSet(minnie_function.DynamicModelScanSet):
@@ -614,9 +888,7 @@ class DynamicModelScanSet(minnie_function.DynamicModelScanSet):
     def fill(cls, keys, name, description=""):
         keys = (DynamicModel.proj() & keys).fetch("KEY")
         # check if all scans are unique
-        assert len(DynamicModel & keys) == len(
-            minnie_nda.Scan * DynamicModel & keys
-        )
+        assert len(DynamicModel & keys) == len(minnie_nda.Scan * DynamicModel & keys)
         # check if all members of a set share the same readout_type
         assert (
             type((DynamicModel & keys).maker()) != list
@@ -636,3 +908,28 @@ class DynamicModelScanSet(minnie_function.DynamicModelScanSet):
             skip_duplicates=True,
             insert_to_parts_kws={"skip_duplicates": True, "ignore_extra_fields": True},
         )
+
+class RespArrNnsV10(minnie_function.RespArrNnsV10):
+    pass
+
+class RespCorr(minnie_function.RespCorr):
+
+    @classmethod
+    def fill(cls):
+        for p in cls.parts(as_cls=True):
+            if hasattr(p, "fill"):
+                p.fill()
+
+    class RespArrNnsV10(minnie_function.RespCorr.RespArrNnsV10):
+
+        @classmethod
+        def fill(cls):
+            content  = (RespArrNnsV10 - cls) * DynamicModelScanSet.proj('scan_set_hash')
+            df = pd.DataFrame(content.fetch('KEY', 'scan_set_hash', as_dict=True))
+            df['resp_corr_type'] = cls.__name__
+            cls.insert(
+                df,
+                insert_to_master=True,
+                ignore_extra_fields=True,
+                skip_duplicates=True,
+            )

@@ -1,13 +1,17 @@
 import datajoint as dj
 import datajoint_plus as djp
+import numpy as np
+from tqdm import tqdm
 
 from . import minnie_nda
 from ..config import minnie_function_config as config
+from ..utils.function_utils import pcorr, xcorr
 
 config.register_externals()
 config.register_adapters(context=locals())
 
-schema = djp.schema(config.schema_name, create_schema=True)
+schema = dj.schema(config.schema_name, create_schema=True)
+schema.connection.dependencies.load()
 
 # Utility mixins
 class MakerMixin:
@@ -148,16 +152,77 @@ class OrientationDV11521GD(djp.Lookup):
 
     def pref_ori(self, unit_key=None):
         unit_key = {} if unit_key is None else unit_key
-        return dj.U(*minnie_nda.UnitSource.primary_key, "pref_ori") & (
+        return (dj.U(*minnie_nda.UnitSource.primary_key, "pref_ori") & (
             self.Unit & self & unit_key
-        ).proj(pref_ori="mu")
+        ).proj(pref_ori="mu")).fetch(format='frame').reset_index()
 
-    def tunability(self, unit_key=None):
+    def selectivity(self, unit_key=None, percentile=True):
         unit_key = {} if unit_key is None else unit_key
-        return dj.U(*minnie_nda.UnitSource.primary_key, "tunability") & (
+        df = (dj.U(*minnie_nda.UnitSource.primary_key, "selectivity") & (
             self.Unit & self & unit_key
-        ).proj(tunability="kappa")
+        ).proj(selectivity="kappa")).fetch(format='frame').reset_index()
+        if percentile:
+            df['selectivity'] = df['selectivity'].rank(pct=True)
+        return df
 
+@schema
+class OrientationDV231042(djp.Manual):
+    definition = """
+    # Orientation tuning extracted with the tuning pipeline within dynamic vision (version 2.3.10.4.2)
+    animal_id            : int                          # id number
+    scan_session         : smallint                     # session index for the mouse
+    scan_idx             : smallint                     # number of TIFF stack file
+    timing_id            : tinyint                      # align neural and stimulus timing
+    behavior_id          : tinyint                      # behavior resampling
+    response_id          : tinyint                      # neural response resampling
+    valid_id             : tinyint                      # neural response resampling
+    unique_id            : tinyint                      # unique unit parameters
+    pipe_version         : smallint                     # 
+    segmentation_method  : tinyint                      # 
+    direction_hash       : varchar(256)                 # unique identifier for direction configuration
+    ---
+    """
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        success              : tinyint                      # success of least squares optimization
+        mu                   : float                        # center of the first von Mises distribution, this is the preferred direction
+        phi                  : float                        # weight of the first von Mises distribution
+        kappa                : float                        # dispersion of both von Mises distributions
+        scale                : float                        # von Mises amplitude
+        bias                 : float                        # uniform amplitude
+        bvm_mse              : float                        # mean squared error
+        osi                  : float                        # orientation selectivity index
+        dsi                  : float                        # direction selectivity index
+        amp                  : float                        # amplitude
+        uniform_mse          : float                        # mean squared error
+        """
+
+    def pref_ori(self, unit_key=None):
+        unit_key = {} if unit_key is None else unit_key
+        unit_df = (dj.U(*minnie_nda.UnitSource.primary_key, "pref_ori") & (
+            self.Unit & self & unit_key
+        ).proj(pref_ori="mu")).fetch(format='frame').reset_index()
+        unit_df['pref_ori'] = (-unit_df['pref_ori'] + np.pi/2) % np.pi  # convert to clock convention (horizontal bar moving upward is 0 and orientation increases clockwise)
+        return unit_df
+
+    def selectivity(self, unit_key=None, percentile=True):
+        unit_key = {} if unit_key is None else unit_key
+        df = (dj.U(*minnie_nda.UnitSource.primary_key, "selectivity") & (
+            self.Unit & self & unit_key
+        ).proj(selectivity="osi")).fetch(format='frame').reset_index()
+        if percentile:
+            df['selectivity'] = df['selectivity'].rank(pct=True)
+        return df
+
+    def tuning(self, unit_key=None, convention='ori'):
+        tuning_dir = djp.create_djp_module('dv_tunings_v4_direction', 'dv_tunings_v4_direction')
+        unit_direction_df = (tuning_dir.DirectionResponse.Unit * tuning_dir.DirectionConfig.Mean& self & unit_key).fetch(format='frame').reset_index()
+        unit_df = unit_direction_df.groupby(['session', 'scan_idx', 'unit_id']).apply(lambda df : df.sort_values('direction').direction.values).to_frame(name='direction')
+        unit_df['response_mean'] = unit_direction_df.groupby(['session', 'scan_idx', 'unit_id']).apply(lambda df : df.sort_values('direction').response_mean.values).to_frame()
+        return unit_df
 
 ## Aggregation tables
 @schema
@@ -188,10 +253,10 @@ class Orientation(djp.Lookup):
         unit_key = {} if unit_key is None else unit_key
         return (self & key).part_table()._pref_ori(unit_key=unit_key)
 
-    def _tunability(self, key=None, unit_key=None):
+    def _selectivity(self, key=None, unit_key=None, percentile=False):
         key = self.fetch("KEY") if key is None else (self & key).fetch("KEY")
         unit_key = {} if unit_key is None else unit_key
-        return (self & key).part_table()._tunability(unit_key=unit_key)
+        return (self & key).part_table()._selectivity(unit_key=unit_key, percentile=percentile)
 
     class DV11521GD(djp.Part):
         _source = "OrientationDV11521GD"
@@ -211,11 +276,33 @@ class Orientation(djp.Lookup):
             unit_key = {} if unit_key is None else unit_key
             return (self.source & key).pref_ori(unit_key=unit_key)
 
-        def _tunability(self, key=None, unit_key=None):
+        def _selectivity(self, key=None, unit_key=None, percentile=False):
             key = self.fetch() if key is None else (self & key).fetch()
             unit_key = {} if unit_key is None else unit_key
-            return (self.source & key).tunability(unit_key=unit_key)
+            return (self.source & key).selectivity(unit_key=unit_key, percentile=percentile)
 
+    class DV231042(djp.Part):
+        _source = "OrientationDV231042"
+        source = eval(_source)
+        enable_hashing = True
+        hash_name = "orientation_hash"
+        hashed_attrs = source.primary_key
+        definition = """
+        #
+        -> master
+        ---
+        -> OrientationDV231042
+        """
+
+        def _pref_ori(self, key=None, unit_key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            unit_key = {} if unit_key is None else unit_key
+            return (self.source & key).pref_ori(unit_key=unit_key)
+
+        def _selectivity(self, key=None, unit_key=None, percentile=False):
+            key = self.fetch() if key is None else (self & key).fetch()
+            unit_key = {} if unit_key is None else unit_key
+            return (self.source & key).selectivity(unit_key=unit_key, percentile=percentile)
 
 @schema
 class OrientationScanInfo(djp.Computed):
@@ -234,10 +321,10 @@ class OrientationScanInfo(djp.Computed):
         assert minnie_nda.Scan().aggr(self, count="count(*)").fetch("count").max() == 1
         return (Orientation & self)._pref_ori(unit_key=unit_key)
 
-    def tunability(self, unit_key=None):
+    def selectivity(self, unit_key=None, percentile=False):
         unit_key = {} if unit_key is None else unit_key
         assert minnie_nda.Scan().aggr(self, count="count(*)").fetch("count").max() == 1
-        return (Orientation & self)._tunability(unit_key=unit_key)
+        return (Orientation & self)._selectivity(unit_key=unit_key, percentile=percentile)
 
 
 @schema
@@ -285,11 +372,29 @@ class OrientationScanSet(djp.Lookup):
             unit_key=unit_key
         )
 
-    def tunability(self, unit_key=None):
-        return (OrientationScanInfo & (self * self.Member).proj()).tunability(
-            unit_key=unit_key
+    def selectivity(self, unit_key=None, percentile=False):
+        return (OrientationScanInfo & (self * self.Member).proj()).selectivity(
+            unit_key=unit_key, percentile=percentile
         )
 
+@schema
+class OrientationFilter(djp.Lookup):
+    definition = """
+    ori_filter_id           : int           # id for an orientation filter
+    ---
+    note                    : varchar(128)  # note for the orientation filter
+    """
+    contents = [
+        [1, 'horizontal cardinal (phi < pi/4 or pi >= pi*3/4)'],
+        [2, 'vertical cardinal (pi/4 <= phi < pi*3/4)']
+    ]
+
+    def get_filter(self, key=None):
+        key = self.fetch1() if key is None else (self & key).fetch1()
+        if key['ori_filter_id'] == 1:
+            return lambda x: x < np.pi/4 or np.pi*3/4 <= x
+        elif key['ori_filter_id'] == 2:
+            return lambda x: np.pi/4 <= x and x < np.pi*3/4
 
 # Oracle
 ## Faithful copy of data
@@ -328,6 +433,43 @@ class OracleDVScan1(djp.Manual):
             & (self.Unit & key)
         ).proj(oracle="statistic")
 
+@schema
+class OracleDVScan3(djp.Manual):
+    definition = """
+    # oracle value computed with dynamic vision scan v1
+    animal_id            : int                          # id number
+    scan_session         : smallint                     # session index for the mouse
+    scan_idx             : smallint                     # number of TIFF stack file
+    timing_id            : tinyint                      # align neural and stimulus timing
+    behavior_id          : tinyint                      # behavior resampling
+    response_id          : tinyint                      # neural response resampling
+    valid_id             : tinyint                      # neural response resampling
+    trial_group_hash     : varchar(256)                 # unique identifier for trial group grouping
+    downsample           : int unsigned                 # response downsampling
+    start_index          : int unsigned                 # index of first sampled response
+    statistic_type       : varchar(64)                  # statistic type
+    segmentation_method  : tinyint                      # segmentation method
+    pipe_version         : smallint                     # 
+    """
+
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        statistic       : float                         # statistic summarizing relationship between trial and oracle
+        """
+
+    def scan(self, key=None):
+        key = self.fetch('KEY') if key is None else (self & key).fetch('KEY')
+        return (self & key).fetch("animal_id", "scan_session", "scan_idx")
+
+    def oracle(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return (
+            dj.U(*minnie_nda.UnitSource.heading.primary_key, "statistic")
+            & (self.Unit & key)
+        ).proj(oracle="statistic")
 
 @schema
 class OracleTuneMovieOracle(djp.Manual):
@@ -402,7 +544,28 @@ class Oracle(djp.Lookup):
         def oracle(self, key=None):
             key = self.fetch() if key is None else (self & key).fetch()
             return (self.source & key).oracle()
+        
+    class DVScan3(djp.Part):
+        _source = "OracleDVScan3"
+        source = eval(_source)
+        enable_hashing = True
+        hash_name = "oracle_hash"
+        hashed_attrs = source.primary_key
+        definition = """
+        #
+        -> master
+        ---
+        -> OracleDVScan3
+        """
 
+        def scan(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).scan()
+
+        def oracle(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).oracle()
+    
     class TuneMovieOracle(djp.Part):
         _source = "OracleTuneMovieOracle"
         source = eval(_source)
@@ -518,6 +681,44 @@ class DynamicModel(djp.Lookup, MakerMixin):
         ro_y                 : float                        # readout y coordinate
         ro_weight            : longblob                     # readout weight, [head, feature]
         """
+    
+    class NnsV10ScanV3Unique(djp.Part):
+        definition = """
+        # dynamic model saved in `dv_nns_v5_scan.__scan_model`
+        -> master
+        ---
+        scan_hash            : varchar(256)                 # configuration of scan dataset
+        nn_hash              : varchar(256)                 # configuration of neural network
+        instance_hash        : varchar(128)                 # nn instance configuration
+        unique_id            : varchar(128)                 # unique unit parameters
+        """
+        enable_hashing = True
+        hash_name = "dynamic_model_hash"
+        hashed_attrs = [
+            "scan_hash",
+            "nn_hash",
+            "instance_hash",
+            "unique_id",
+            "animal_id",
+            "scan_session",
+            "scan_idx",
+            "dynamic_model_type",
+        ]
+
+        def readout(self, part_key=None):
+            part_key = {} if part_key is None else part_key
+            return DynamicModel.NnsV10ScanV3UniqueUnitReadout & self & part_key
+
+    class NnsV10ScanV3UniqueUnitReadout(djp.Part):
+        definition = """
+        # readout saved in `dv_nns_v10_scan.__readout`
+        -> DynamicModel.NnsV10ScanV3Unique
+        -> minnie_nda.UnitSource
+        ---
+        ro_x                 : float                        # readout x coordinate
+        ro_y                 : float                        # readout y coordinate
+        ro_weight            : longblob                     # readout weight, [head, feature]
+        """
 
 
 @schema
@@ -572,6 +773,37 @@ class DynamicModelScore(djp.Lookup, MakerMixin):
         statistic            : float                        # statistic summarizing relationship between scan and behavioral model responses
         """
 
+    class NnsV10ScanV3Unique(djp.Part):
+        definition = """
+        # Predictive model performance and parameters
+        -> master
+        ---
+        trial_group_hash       : varchar(256)                 # policy for defining groups of stimulus slices
+        behavior_hash          : varchar(256)                 # nn behavior configuration
+        eye_position           : bool                         # use eye position data
+        behavior               : bool                         # use behavioral data
+        statistic_type         : varchar(64)                  # statistic type
+        """
+        enable_hashing = True
+        hash_name = "dynamic_score_hash"
+        hashed_attrs = [
+            "trial_group_hash",
+            "statistic_type",
+            "behavior_hash",
+            "dynamic_score_type",
+        ]
+
+        def unit_score(self, part_key=None):
+            part_key = {} if part_key is None else part_key
+            return (DynamicModelScore.NnsV10ScanV3UniqueUnitScore * self) & part_key
+
+    class NnsV10ScanV3UniqueUnitScore(djp.Part):
+        definition = """
+        -> DynamicModelScore.NnsV10ScanV3Unique
+        -> minnie_nda.UnitSource
+        ---
+        statistic            : float                        # statistic summarizing relationship between scan and behavioral model responses
+        """
 
 @schema
 class DynamicModelScanSet(djp.Lookup):
@@ -598,43 +830,102 @@ class DynamicModelScanSet(djp.Lookup):
         """
 
     def readout(self, part_key=None):
-        master_key = (DynamicModel & self.Member().proj()).proj().fetch()
+        master_key = (DynamicModel & (self.Member().proj() & self.proj())).proj().fetch()
         return (DynamicModel & master_key).readout(part_key)
 
     def unit_score(self, part_key=None):
-        master_key = (DynamicModel & self.Member().proj()).proj().fetch()
+        master_key = (DynamicModel & (self.Member().proj() & self.proj())).proj().fetch()
         return (DynamicModelScore & master_key).unit_score(part_key)
 
 # WIP
-# @schema
-# class DynamicModelRespCorr(djp.Manual):
-#     definition = '''
-#     # response correlation matrix
-#     -> DynamicModelScanSet
-#     dynamic_resp_corr_hash : varchar(32)
-#     ---
-#     n_neuron               : int                # number of neurons
-#     description            : varchar(256)       # description of the response correlation matrix
-#     '''
-
-#     class DVManual(djp.Manual):
-#         definition = '''
-#         # response correlation matrices computed manually in dynamic_vision environment 
-#         -> master
-#         ---
-#         script_gh_link     : varchar(256)       # link to script for replicating the response matrix
-#         resp_corr_matrix   : 
-#         '''
+@schema
+class RespArrNnsV10(djp.Manual):
+    definition = """
+    resp_array_idx          : int unsigned
+    ---
+    -> DynamicModelScanSet
+    resp_array              : blob@resp_array
+    description             : varchar(255)          # description of the response array
+    """
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        row_idx             : int unsigned          # row index in the response array
+        """
     
-#     class DVManualUnit(djp.Manual):
-#         definition = """
-#         # unit identity of each dimension in the response correlation matrices
-#         -> master
-#         corr_matrix_idx    : int unsigned       # index of the unit in the response correlation matrix
-#         ---
-#         -> minnie_nda.UnitSource
-#         """
+    class Condition(djp.Part):
+        stimulus = djp.create_djp_module('pipeline_stimulus', 'pipeline_stimulus')
+        definition = """
+        -> master
+        -> djp.create_djp_module('pipeline_stimulus', 'pipeline_stimulus').Condition
+        ---
+        col_idx_start             : int unsigned     # start index of the condition in the response array
+        col_idx_end               : int unsigned     # end index of the condition in the response array
+        """
+    
 
+@schema
+class RespCorr(djp.Lookup):
+    hash_part_table_names = True
+    hash_name = "resp_corr_hash"
+    definition = """
+    resp_corr_hash                  : varchar(32)
+    ---
+    -> ScanSet
+    resp_corr_type                  : varchar(48)
+    resp_corr_ts=CURRENT_TIMESTAMP  : timestamp
+    """
+
+    class RespArrNnsV10(djp.Part):
+        definition = """
+        -> master
+        ---
+        -> RespArrNnsV10
+        """
+        enable_hashing = True
+        hash_name = "resp_corr_hash"
+        hashed_attrs = [
+            "resp_array_idx",
+        ]
+
+        def get_resp_array(self):
+            key = self.fetch1('KEY')
+            if not (hasattr(self.__class__, '_cache_key') and self.__class__._cache_key == key):
+                self.__class__._cache_key = key
+                self.__class__._cache_resp_array = (RespArrNnsV10 & self).fetch1('resp_array')
+            return self.__class__._cache_resp_array
+
+        def get_resp(self, unit_df):
+            unit_index_df = (RespArrNnsV10.Unit & self).fetch(format='frame').reset_index()
+            resp_array = self.get_resp_array()
+            row_idx = unit_df.merge(unit_index_df, how='left')[['row_idx']].values.squeeze()
+            return resp_array[row_idx,:]
+
+        def get_corr(self, unit_df1, unit_df2, max_batch_size=100_000):
+            # unit_df = (RespArrNnsV10.Unit & self).fetch(format='frame').reset_index()
+            # row_idx1 = unit_df1.merge(unit_df, how='left')[['row_idx']].values.squeeze()
+            # row_idx2 = unit_df2.merge(unit_df, how='left')[['row_idx']].values.squeeze()    
+            # assert not np.isnan(row_idx1).any() or not np.isnan(row_idx2).any(), "units not found in the response array"
+            assert len(unit_df1) == len(unit_df2), "unit_df1 and unit_df2 must have the same length"
+            corr = []
+            unit_df1_batch = np.array_split(unit_df1, np.ceil(len(unit_df1)/max_batch_size))
+            unit_df2_batch = np.array_split(unit_df2, np.ceil(len(unit_df2)/max_batch_size))
+            for _unit_df1, _unit_df2 in zip(tqdm(unit_df1_batch, desc='batch'), unit_df2_batch):
+                resp_1 = self.get_resp(_unit_df1)
+                resp_2 = self.get_resp(_unit_df2)
+                corr.append(pcorr(resp_1, resp_2))
+            corr = np.concatenate(corr)
+            assert len(corr) == len(unit_df1)
+            return corr
+        
+        def get_xcorr(self, unit_df):
+            resp = self.get_resp(unit_df)
+            return xcorr(resp)
+
+    def get_corr(self, unit_df1, unit_df2):
+        return self.r1p(self).get_corr(unit_df1, unit_df2)
 
 
 
