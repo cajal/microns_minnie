@@ -1,7 +1,9 @@
 import datajoint as dj
 import datajoint_plus as djp
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
+from scipy import stats
 
 from . import minnie_nda
 from ..config import minnie_function_config as config
@@ -927,6 +929,99 @@ class RespCorr(djp.Lookup):
     def get_corr(self, unit_df1, unit_df2):
         return self.r1p(self).get_corr(unit_df1, unit_df2)
 
+@schema
+class RunningID(djp.Lookup):
+    definition="""
+    running_id          : int unsigned
+    ---
+    description         : varchar(255)
+    """
+    contents = [
+        (1, 'minimum speed threshold = 0.5 cm/s, fetch data from dv scans v3 with timing_id=0, behavior_id=1, valid_id=0'),
+    ]
+
+    @staticmethod
+    def compute_running_time(scan_key, running_id):
+        if running_id == 1:
+            min_velocity_threshold = 0.5
+            scan = djp.create_djp_module("scan", "dv_scans_v3_scan")
+            scan_dataset = djp.create_djp_module("scan_dataset", "dv_scans_v3_scan_dataset")
+            stimulus = djp.create_djp_module("pipeline_stimulus", "pipeline_stimulus")
+            rel = (
+                scan.Behavior.Trial * scan.Response.Trial * scan.Valid.Trial * scan.TimingInfo
+                * stimulus.Trial * stimulus.Condition & stimulus.Clip
+                & "valid"
+            ).proj(..., scan_session='session') & scan_key
+            behavior, hz = (rel & scan_key).fetch('behavior', 'hz')
+            treadmill = np.concatenate(behavior)[:,2]
+            hz = float(np.unique(hz))
+            running_idx = np.nonzero(treadmill > min_velocity_threshold)[0]
+            running_sec = len(running_idx) / hz
+            total_sec = len(treadmill) / hz
+            return running_sec, total_sec
+        else:
+            raise NotImplementedError
+
+@schema
+class Running(djp.Computed):
+    definition = """
+    -> RunningID
+    -> minnie_nda.Scan
+    ---
+    running_time       : float                 # total running time in seconds
+    scan_time          : float                 # total scan time included in the analysis in seconds
+    """
+
+    def make(self, key):
+        running_sec, total_sec = RunningID.compute_running_time(key, running_id=key['running_id'])
+        self.insert1({**key, 'running_time': running_sec, 'scan_time': total_sec})
+
+@datajoint_utils.config_table(schema, config_type="beh_mod")
+class BehModConfig(djp.Lookup):
+    '''
+    Configuration for computing behavior modulation for single neurons
+    '''
+    class LocCorrScan3(djp.Part):
+        definition = """
+        -> master
+        ---
+        binning_window    : decimal(3,2)            # binning window in seconds
+        """
+        contents = [
+            (0.5),
+        ]
+
+        def compute(self, key, scan_key):
+            binning_window = float(self.fetch1('binning_window'))
+            scan = djp.create_djp_module("scan", "dv_scans_v3_scan")
+            stimulus = djp.create_djp_module("pipeline_stimulus", "pipeline_stimulus")
+            rel = (
+                scan.Behavior.Trial * scan.Response.Trial * scan.Valid.Trial * scan.TimingInfo
+                * stimulus.Trial * stimulus.Condition & stimulus.Clip
+                & "valid"
+            ).proj(..., scan_session='session') & scan_key
+            data = pd.DataFrame(
+                (rel & scan_key).fetch(
+                    "trial_idx", "animal_id", "session", "scan_idx", "response", "behavior", "hz", as_dict=True
+                )
+            )
+
+            # restrict behavior to treadmill only
+            data["behavior"] = data["behavior"].apply(lambda b: b[:, 2])
+            data["treadmill"] = data["behavior"]
+            del data["behavior"]
+            hz = float(np.unique(data["hz"].values))
+
+            unit_df = pd.DataFrame((scan.Unit().proj(..., scan_session='session') & scan_key).fetch(as_dict=True))
+            # bin treadmill and response
+            binning_window_frame = binning_window * hz
+            data["treadmill"] = data["treadmill"].apply(lambda x: np.mean(x.reshape(-1, binning_window_frame), axis=1))
+            data["response"] = data["response"].apply(lambda x: np.mean(x.reshape(-1, binning_window_frame, x.shape[1]), axis=1))
+            treadmill = np.concatenate(data[f"treadmill"].values)
+            response = np.concatenate(data[f"response"].values)
+            unit_df[f"beh_mod"] = [stats.pearsonr(treadmill, r)[0] for r in response.T]
+            return unit_df
+            
 
 
 schema.spawn_missing_classes()
