@@ -1430,7 +1430,7 @@ class NoiseCorr(djp.Computed):
             NoiseCorrConfig().part_table(key).compute(scan_key=key)
         )
         self.insert1(key)
-        self.Unit().insert(unit_df.to_dict("records"), ignore_extra_fields=True)
+        self.Unit().insert([{**key, **d} for d in unit_df.to_dict("records")], ignore_extra_fields=True)
         self.CorrMatrix().insert1(dict(key, corr_matrix=corr_matrix, p_matrix=p_matrix))
 
 
