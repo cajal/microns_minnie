@@ -2,6 +2,7 @@ import functools
 import datajoint as dj
 import datajoint_plus as djp
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
 from datajoint_plus.utils import classproperty
 from microns_nda_api.schemas import minnie_function, minnie_nda
@@ -293,7 +294,30 @@ class OrientationDV231042(minnie_function.OrientationDV231042):
         )
         assert direction_stimulus_rel, "stimulus type not implemented!"
         return direction_stimulus_rel.proj(sec="duration * n_rng_seeds").fetch1("sec")
-
+    
+    def tuning_curve(self, key=None):
+        key = self.fetch1() if key is None else (self & key).fetch1()
+        cfg_part_table = (self.dv_direction.DirectionConfig & key).fetch1('direction_type')
+        cfg_part_table = getattr(self.dv_direction.DirectionConfig, cfg_part_table)
+        cfg_part_table &= key
+        unit_df = pd.DataFrame(
+            (self.dv_direction.DirectionResponse.Unit.proj(..., scan_session='session') * self.dv_direction.DirectionResponse.Direction & cfg_part_table & key).fetch('scan_session', 'scan_idx', 'unit_id', 'direction', 'response_mean', 'response_std', 'n_trials', as_dict=True)
+        )
+        unit_id, direction, response_mean, response_std = [], [], [], []
+        for u, g in unit_df.groupby('unit_id'):
+            data = g.sort_values('direction')[['direction', 'response_mean', 'response_std']]
+            unit_id.append(u)
+            direction.append(data.direction.to_numpy() / 180 * np.pi)
+            response_mean.append(data.response_mean.to_numpy())
+            response_std.append(data.response_std.to_numpy())
+        tuning_curve_df = pd.DataFrame(dict(
+            unit_id=unit_id,
+            direction=direction,
+            response_mean=response_mean,
+            response_std=response_std,
+            **key,
+        ))
+        return tuning_curve_df
 
 ## Aggregation tables
 class Orientation(minnie_function.Orientation):
@@ -324,6 +348,10 @@ class Orientation(minnie_function.Orientation):
             lambda a, b: {*a, *b},
             [(cls & key).stimulus_type() for key in cls.fetch("KEY")],
         )
+    
+    def tuning_curve(self, key=None):
+        key = self.fetch1() if key is None else (self & key).fetch1()
+        return (self & key).part_table().tuning_curve()
 
     class DV11521GD(minnie_function.Orientation.DV11521GD):
         @classproperty
@@ -359,6 +387,9 @@ class Orientation(minnie_function.Orientation):
             key = self.fetch1() if key is None else (self & key).fetch1()
             return (self.source & key).len_sec()
 
+        def tuning_curve(self, key=None):
+            raise NotImplementedError
+
     class DV231042(minnie_function.Orientation.DV231042):
         @classproperty
         def source(cls):
@@ -374,6 +405,7 @@ class Orientation(minnie_function.Orientation):
                 insert_to_master=True,
                 constant_attrs=constant_attrs,
                 ignore_extra_fields=True,
+                skip_duplicates=True,
             )
 
         def stimulus_type(self, key=None):
@@ -392,6 +424,9 @@ class Orientation(minnie_function.Orientation):
             key = self.fetch1() if key is None else (self & key).fetch1()
             return (self.source & key).len_sec()
 
+        def tuning_curve(self, key=None):
+            key = self.fetch1() if key is None else (self & key).fetch1()
+            return (OrientationDV231042 & key).tuning_curve()
 
 class OrientationScanInfo(minnie_function.OrientationScanInfo):
     @property
@@ -424,6 +459,12 @@ class OrientationScanInfo(minnie_function.OrientationScanInfo):
             )
         )
 
+    def tuning_curve(self, percentile=False):
+        assert minnie_nda.Scan().aggr(self, count="count(*)").fetch("count").max() == 1
+        tuning_curve = []
+        for key in self.fetch("KEY"):
+            tuning_curve.append((Orientation & key).tuning_curve())
+        return pd.concat(tuning_curve, ignore_index=True)
 
 class OrientationScanSet(minnie_function.OrientationScanSet):
     class Member(minnie_function.OrientationScanSet.Member):
@@ -460,6 +501,8 @@ class OrientationScanSet(minnie_function.OrientationScanSet):
             insert_to_parts_kws={"skip_duplicates": True, "ignore_extra_fields": True},
         )
 
+    def tuning_curve(self, unit_key=None):
+        return (OrientationScanInfo & (self * self.Member).proj()).tuning_curve()
 
 # Oracle
 ## Faithful copy of data
@@ -762,6 +805,66 @@ class DynamicModel(minnie_function.DynamicModel):
     ):
         pass
 
+
+    class NnsV10ScanV3All(minnie_function.DynamicModel.NnsV10ScanV3All, VMMixin):
+        virtual_module_dict = {
+            "dv_nns_v10_scan": "dv_nns_v10_scan",
+            "dv_scans_v3_scan_dataset": "dv_scans_v3_scan_dataset",
+            "dv_scans_v3_scan": "dv_scans_v3_scan",
+        }
+
+        @classmethod
+        def fill(cls):
+            cls.spawn_virtual_modules(cls.virtual_module_dict)
+            keys = minnie_nda.Scan.fetch("KEY")
+            scan_keys = (
+                (
+                    cls.virtual_modules["dv_nns_v10_scan"].Readout
+                    - cls.proj(session='scan_session')
+                    & keys
+                )
+                * cls.virtual_modules["dv_nns_v10_scan"].ScanConfig.Scan3
+                * cls.virtual_modules["dv_scans_v3_scan_dataset"].Dataset
+                * cls.virtual_modules["dv_scans_v3_scan_dataset"]
+                .UnitConfig()
+                .All()
+            ).proj(..., scan_session='session').fetch(as_dict=True)
+            logging.info(f'Found {len(scan_keys)} models to insert!')
+            if input("Proceed? (y/n)") != "y":
+                return
+            for scan_key in scan_keys:
+                with dj.conn().transaction:
+                    cls.insert1(
+                        scan_key,
+                        insert_to_master=True,
+                        constant_attrs={"dynamic_model_type": cls.__name__},
+                        ignore_extra_fields=True,
+                    )
+                    unit_keys = (
+                        (
+                            (
+                                cls.virtual_modules["dv_nns_v10_scan"].Readout.Unit.proj(..., unique_unit_id='unit_id')
+                                * cls.virtual_modules["dv_scans_v3_scan"].Unique.Neuron.proj(..., unique_unit_id='unit_id')
+                                * cls.virtual_modules["dv_scans_v3_scan"].Unique.Unit
+                            ).proj(
+                                ..., scan_session="session"
+                            )
+                            & scan_key
+                        )
+                        .fetch(format="frame")
+                        .reset_index()
+                    )
+                    unit_keys["dynamic_model_type"] = cls.__name__
+                    unit_keys = cls.add_hash_to_rows(unit_keys)
+                    DynamicModel.NnsV10ScanV3AllUnitReadout.insert(
+                        unit_keys,
+                        ignore_extra_fields=True,
+                    )
+
+    class NnsV10ScanV3AllUnitReadout(
+        minnie_function.DynamicModel.NnsV10ScanV3AllUnitReadout
+    ):
+        pass
 
 class DynamicModelScore(minnie_function.DynamicModelScore):
     class NnsV5(minnie_function.DynamicModelScore.NnsV5, VMMixin):
