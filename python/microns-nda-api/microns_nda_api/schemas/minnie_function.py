@@ -4,16 +4,23 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from tqdm import tqdm
+import decimal
 
 from ..config import minnie_function_config as config
 from ..utils.function_utils import pcorr, xcorr
+from ..utils import datajoint_utils
 from . import minnie_nda
+from microns_nda_api.utils import function_utils
+from scipy.spatial.distance import squareform
+
+netflix = djp.create_dj_virtual_module("netflix", "pipeline_netflix")
+stimulus = djp.create_dj_virtual_module("stimulus", "pipeline_stimulus")
 
 config.register_externals()
 config.register_adapters(context=locals())
 
 schema = dj.schema(config.schema_name, create_schema=True)
-schema.connection.dependencies.load()
+# schema.connection.dependencies.load()
 
 # Utility mixins
 class MakerMixin:
@@ -218,7 +225,7 @@ class OrientationDV231042(djp.Manual):
         uniform_mse          : float                        # mean squared error
         """
 
-    def pref_ori(self, unit_key=None):
+    def pref_ori(self, unit_key=None, clock_convention=True):
         unit_key = {} if unit_key is None else unit_key
         unit_df = (
             (
@@ -228,9 +235,10 @@ class OrientationDV231042(djp.Manual):
             .fetch(format="frame")
             .reset_index()
         )
-        unit_df["pref_ori"] = (
-            -unit_df["pref_ori"] + np.pi / 2
-        ) % np.pi  # convert to clock convention (horizontal bar moving upward is 0 and orientation increases clockwise)
+        if clock_convention:
+            unit_df["pref_ori"] = (
+                -unit_df["pref_ori"] + np.pi / 2
+            ) % np.pi  # convert to clock convention (horizontal bar moving upward is 0 and orientation increases clockwise)
         return unit_df
 
     def selectivity(self, unit_key=None, percentile=True):
@@ -248,7 +256,7 @@ class OrientationDV231042(djp.Manual):
         return df
 
     def tuning(self, unit_key=None, convention="ori"):
-        tuning_dir = djp.create_djp_module(
+        tuning_dir = djp.create_dj_virtual_module(
             "dv_tunings_v4_direction", "dv_tunings_v4_direction"
         )
         unit_direction_df = (
@@ -288,12 +296,11 @@ class Orientation(djp.Lookup):
 
     def part_table(self, key=None):
         key = self.fetch("KEY") if key is None else (self & key).fetch("KEY")
-        part = [
-            self.restrict_one_part_with_hash(k[self.hash_name]).__class__ for k in key
-        ]
+        part = (self & key).fetch("orientation_type")
         part = set(part)
         assert len(part) == 1
         part = part.pop()
+        part = getattr(self, part)
         part_key = (part & key).fetch()
         return part & part_key
 
@@ -784,6 +791,41 @@ class DynamicModel(djp.Lookup, MakerMixin):
         ro_weight            : longblob                     # readout weight, [head, feature]
         """
 
+    class NnsV10ScanV3All(djp.Part):
+        definition = """
+        # dynamic model saved in `dv_nns_v5_scan.__scan_model`
+        -> master
+        ---
+        scan_hash            : varchar(256)                 # configuration of scan dataset
+        nn_hash              : varchar(256)                 # configuration of neural network
+        instance_hash        : varchar(128)                 # nn instance configuration
+        """
+        enable_hashing = True
+        hash_name = "dynamic_model_hash"
+        hashed_attrs = [
+            "scan_hash",
+            "nn_hash",
+            "instance_hash",
+            "animal_id",
+            "scan_session",
+            "scan_idx",
+            "dynamic_model_type",
+        ]
+
+        def readout(self, part_key=None):
+            part_key = {} if part_key is None else part_key
+            return DynamicModel.NnsV10ScanV3UniqueUnitReadout & self & part_key
+
+    class NnsV10ScanV3AllUnitReadout(djp.Part):
+        definition = """
+        # readout saved in `dv_nns_v10_scan.__readout`
+        -> DynamicModel.NnsV10ScanV3All
+        -> minnie_nda.UnitSource
+        ---
+        ro_x                 : float                        # readout x coordinate
+        ro_y                 : float                        # readout y coordinate
+        ro_weight            : longblob                     # readout weight, [head, feature]
+        """
 
 @schema
 class DynamicModelScore(djp.Lookup, MakerMixin):
@@ -927,10 +969,10 @@ class RespArrNnsV10(djp.Manual):
         """
 
     class Condition(djp.Part):
-        stimulus = djp.create_djp_module("pipeline_stimulus", "pipeline_stimulus")
+        stimulus = djp.create_dj_virtual_module("pipeline_stimulus", "pipeline_stimulus")
         definition = """
         -> master
-        -> djp.create_djp_module('pipeline_stimulus', 'pipeline_stimulus').Condition
+        -> djp.create_dj_virtual_module('pipeline_stimulus', 'pipeline_stimulus').Condition
         ---
         col_idx_start             : int unsigned     # start index of the condition in the response array
         col_idx_end               : int unsigned     # end index of the condition in the response array
@@ -1034,11 +1076,11 @@ class RunningID(djp.Lookup):
     def compute_running_time(scan_key, running_id):
         if running_id == 1:
             min_velocity_threshold = 0.5
-            scan = djp.create_djp_module("scan", "dv_scans_v3_scan")
-            scan_dataset = djp.create_djp_module(
+            scan = djp.create_dj_virtual_module("scan", "dv_scans_v3_scan")
+            scan_dataset = djp.create_dj_virtual_module(
                 "scan_dataset", "dv_scans_v3_scan_dataset"
             )
-            stimulus = djp.create_djp_module("pipeline_stimulus", "pipeline_stimulus")
+            stimulus = djp.create_dj_virtual_module("pipeline_stimulus", "pipeline_stimulus")
             rel = (
                 scan.Behavior.Trial
                 * scan.Response.Trial
@@ -1070,6 +1112,10 @@ class Running(djp.Computed):
     scan_time          : float                 # total scan time included in the analysis in seconds
     """
 
+    @property
+    def key_source(self):
+        return RunningID * minnie_nda.Scan & ScanSet.Member
+
     def make(self, key):
         running_sec, total_sec = RunningID.compute_running_time(
             key, running_id=key["running_id"]
@@ -1077,41 +1123,51 @@ class Running(djp.Computed):
         self.insert1({**key, "running_time": running_sec, "scan_time": total_sec})
 
 
+scan3 = djp.create_dj_virtual_module("scan", "dv_scans_v3_scan")
 @datajoint_utils.config_table(schema, config_type="beh_mod")
 class BehModConfig(djp.Lookup):
     """
     Configuration for computing behavior modulation for single neurons
     """
-
     class LocCorrScan3(djp.Part):
         definition = """
         -> master
         ---
-        binning_window    : decimal(3,2)            # binning window in seconds
+        -> scan3.TimingId
+        -> scan3.BehaviorId
+        -> scan3.ResponseId
+        -> scan3.ValidId
+        binning_window    : decimal(4,2)            # binning window in seconds
         """
-        contents = [
-            (0.5),
+        content = [
+            {
+                "binning_window": decimal.Decimal("0.50"),
+                "timing_id": 0,
+                "behavior_id": 0,
+                "response_id": 1,
+                "valid_id": 0,
+            },
         ]
 
-        def compute(self, key, scan_key):
+        def compute(self, scan_key):
+            params = self.fetch1()
             binning_window = float(self.fetch1("binning_window"))
-            scan = djp.create_djp_module("scan", "dv_scans_v3_scan")
-            stimulus = djp.create_djp_module("pipeline_stimulus", "pipeline_stimulus")
             rel = (
-                scan.Behavior.Trial
-                * scan.Response.Trial
-                * scan.Valid.Trial
-                * scan.TimingInfo
+                scan3.Behavior.Trial
+                * scan3.Response.Trial
+                * scan3.Valid.Trial
+                * scan3.TimingInfo
                 * stimulus.Trial
                 * stimulus.Condition
                 & stimulus.Clip
+                & params
                 & "valid"
             ).proj(..., scan_session="session") & scan_key
             data = pd.DataFrame(
                 (rel & scan_key).fetch(
                     "trial_idx",
                     "animal_id",
-                    "session",
+                    "scan_session",
                     "scan_idx",
                     "response",
                     "behavior",
@@ -1127,18 +1183,18 @@ class BehModConfig(djp.Lookup):
             hz = float(np.unique(data["hz"].values))
 
             unit_df = pd.DataFrame(
-                (scan.Unit().proj(..., scan_session="session") & scan_key).fetch(
-                    as_dict=True
+                (scan3.Unit().proj(..., scan_session="session") & scan_key).fetch(
+                    as_dict=True, order_by="response_index"
                 )
             )
             # bin treadmill and response
-            binning_window_frame = binning_window * hz
+            w = int(np.ceil(binning_window * hz))
             data["treadmill"] = data["treadmill"].apply(
-                lambda x: np.mean(x.reshape(-1, binning_window_frame), axis=1)
+                lambda x: np.mean(x[: int(len(x) // w * w)].reshape(-1, w), axis=1)
             )
             data["response"] = data["response"].apply(
                 lambda x: np.mean(
-                    x.reshape(-1, binning_window_frame, x.shape[1]), axis=1
+                    x[: int(len(x) // w * w), :].reshape(-1, w, x.shape[1]), axis=1
                 )
             )
             treadmill = np.concatenate(data[f"treadmill"].values)
@@ -1147,5 +1203,236 @@ class BehModConfig(djp.Lookup):
             return unit_df
 
 
+@schema
+class BehMod(djp.Computed):
+    definition = """
+    -> BehModConfig
+    -> minnie_nda.Scan
+    """
+
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        beh_mod            : float                 # behavior modulation
+        """
+
+    key_source = BehModConfig * minnie_nda.Scan & ScanSet.Member
+
+    def make(self, key):
+        unit_df = (BehModConfig & key).part_table().compute(scan_key=key)
+        self.insert1(key)
+        self.Unit().insert(unit_df.to_dict("records"), ignore_extra_fields=True)
+
+
+@datajoint_utils.config_table(schema, config_type="noise_corr")
+class NoiseCorrConfig(djp.Lookup):
+    class Scan3OracleCond(djp.Part):
+        definition = """
+        -> master
+        ---
+        -> scan3.TimingId
+        -> scan3.BehaviorId
+        -> scan3.ResponseId
+        -> scan3.ValidId
+        -> stimulus.Condition
+        binning_window    : decimal(4,2)            # binning window in seconds
+        """
+        content = [
+            {
+                **d,
+                "binning_window": decimal.Decimal("0.50"),
+                "timing_id": 0,
+                "behavior_id": 0,
+                "response_id": 1,
+                "valid_id": 0,
+            }
+            for d in (stimulus.Clip & netflix.OracleSet()).fetch(
+                "condition_hash", as_dict=True
+            )
+        ]
+
+        def compute(self, scan_key):
+            params = self.fetch1()
+            binning_window= float(params["binning_window"])
+
+            unit_df = pd.DataFrame(
+                (scan3.Unit & params & scan_key).proj(..., scan_session='session').fetch(
+                    "animal_id",
+                    "scan_session",
+                    "scan_idx",
+                    "unit_id",
+                    "response_index",
+                    order_by="response_index",
+                    as_dict=True,
+                )
+            )
+            unit_df['corr_idx'] = unit_df['response_index']
+
+            oracle_trials = (
+                scan3.Response.Trial
+                * scan3.Valid.Trial
+                * scan3.TimingId
+                * scan3.TimingInfo
+                * stimulus.Trial
+                * stimulus.Condition
+            ).proj(..., scan_session="session") & params & "valid" & scan_key
+            response, hz = oracle_trials.fetch(
+                "response", "hz"
+            )
+            assert len(np.unique(hz)) == 1
+            hz = hz[0]
+            w = int(np.ceil(binning_window * hz))
+            # bin response
+            response = [
+                np.mean(r[:len(r)//w*w].reshape(-1, w, r.shape[1]), axis=1)
+                for r in response
+            ]
+            response = np.stack(response, axis=0)  # n_trials x n_bins x n_units
+            # get residue from mean
+            response = response - np.mean(response, axis=0, keepdims=True)
+            # z-score single trial residues
+            response_z = stats.zscore(response, axis=1)
+            response_z = response_z.reshape(-1, response_z.shape[-1])  # n_trials*n_bins x n_units
+            rho, p = function_utils.xcorr_p(response_z.T)
+            rho, p = squareform(rho,checks=False), squareform(p, checks=False)
+
+            return unit_df, rho, p
+
+    class Scan3Oracle(djp.Part):
+        definition = """
+        -> master
+        ---
+        -> scan3.TimingId
+        -> scan3.BehaviorId
+        -> scan3.ResponseId
+        -> scan3.ValidId
+        binning_window    : decimal(4,2)            # binning window in seconds
+        min_repeat        : int                     # minimum number of repeats to be considered
+        """
+        content = [
+            {
+                "binning_window": decimal.Decimal("0.50"),
+                "timing_id": 0,
+                "behavior_id": 0,
+                "response_id": 1,
+                "valid_id": 0,
+                "min_repeat": 4,
+            },
+        ]
+
+        def compute(self, scan_key):
+            params = self.fetch1()
+            binning_window= float(params["binning_window"])
+
+            unit_df = pd.DataFrame(
+                (scan3.Unit & params & scan_key).proj(..., scan_session='session').fetch(
+                    "animal_id",
+                    "scan_session",
+                    "scan_idx",
+                    "unit_id",
+                    "response_index",
+                    order_by="response_index",
+                    as_dict=True,
+                )
+            )
+            unit_df['corr_idx'] = unit_df['response_index']
+
+            oracle_trial = (
+                scan3.Response.Trial
+                * scan3.Valid.Trial
+                * scan3.TimingId
+                * scan3.TimingInfo
+                * stimulus.Trial
+                * stimulus.Condition
+                & "valid"
+                & params
+                & scan_key
+            ).proj(..., scan_session='session')
+            oracle_trial_df = pd.DataFrame(
+                oracle_trial.fetch(
+                    "animal_id", "scan_session", "scan_idx", "condition_hash", "response", "hz", as_dict=True
+                )
+            )
+            # bin to 500ms
+            assert len(oracle_trial_df.hz.unique()) == 1
+            hz = oracle_trial_df.hz.unique()[0]
+            bins = int(np.ceil(hz * binning_window))
+            oracle_trial_df["response"] = oracle_trial_df.response.apply(lambda x : np.mean(x[:x.shape[0]//bins*bins,:].reshape(-1, x.shape[1], bins), axis=-1))
+            oracle_df = (
+                oracle_trial_df[["animal_id", "session", "scan_idx", "condition_hash"]]
+                .drop_duplicates()
+                .reset_index(drop=True)
+            )
+
+            oracle_df = oracle_df.merge(
+                oracle_trial_df.groupby("condition_hash")
+                .apply(
+                    lambda df: np.stack(df["response"], axis=0)
+                )
+                .to_frame("single_trial")
+                .reset_index()
+            )
+            oracle_df = oracle_df.loc[oracle_df.single_trial.apply(lambda x : x.shape[0]) >= params["min_repeat"]]
+            oracle_df['mean'] = oracle_df['single_trial'].apply(
+                lambda row: row.mean(axis=0)
+            )
+            oracle_df['residue'] = oracle_df['single_trial'] - oracle_df['mean']
+            oracle_df['residue_z'] = oracle_df['residue'].apply(
+                lambda row: stats.zscore(row, axis=0)
+            )
+            oracle_df['residue_z'] = oracle_df['residue_z'].apply(
+                lambda row: row.reshape(-1, row.shape[-1])
+            )
+            residue_z = np.concatenate(oracle_df['residue_z'].to_numpy())
+            rho, p = function_utils.xcorr_p(residue_z.T)
+            rho, p = squareform(rho,checks=False), squareform(p, checks=False)
+            return unit_df, rho, p
+
+
+@schema
+class NoiseCorr(djp.Computed):
+    definition = """
+    -> NoiseCorrConfig
+    -> minnie_nda.Scan
+    """
+
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        corr_idx           : int               # index in the correlation matrix
+        """
+
+    class CorrMatrix(djp.Part):
+        definition = """
+        -> master
+        ---
+        corr_matrix        : blob@corr_array          # correlation matrix
+        p_matrix           : blob@corr_array          # p-value matrix from permutation test, stored in vector-form
+        """
+
+    @property
+    def key_source(self):
+        scan_oracle = (
+            ScanSet.Member.proj(session="scan_session")
+            * stimulus.Condition
+        ) & (stimulus.Trial & (stimulus.Clip * netflix.OracleSet))
+        return NoiseCorrConfig * minnie_nda.Scan & [
+            scan_oracle.proj(scan_session="session") * NoiseCorrConfig.Scan3OracleCond,
+            scan_oracle.proj(scan_session="session") * NoiseCorrConfig.Scan3Oracle,
+        ]
+
+    def make(self, key):
+        unit_df, corr_matrix, p_matrix = (
+            NoiseCorrConfig().part_table(key).compute(scan_key=key)
+        )
+        self.insert1(key)
+        self.Unit().insert(unit_df.to_dict("records"), ignore_extra_fields=True)
+        self.CorrMatrix().insert1(dict(key, corr_matrix=corr_matrix, p_matrix=p_matrix))
+
+
 schema.spawn_missing_classes()
-schema.connection.dependencies.load()
+# schema.connection.dependencies.load()
