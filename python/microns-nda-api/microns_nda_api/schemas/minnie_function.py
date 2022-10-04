@@ -1361,7 +1361,7 @@ class NoiseCorrConfig(djp.Lookup):
             bins = int(np.ceil(hz * binning_window))
             oracle_trial_df["response"] = oracle_trial_df.response.apply(lambda x : np.mean(x[:x.shape[0]//bins*bins,:].reshape(-1, x.shape[1], bins), axis=-1))
             oracle_df = (
-                oracle_trial_df[["animal_id", "session", "scan_idx", "condition_hash"]]
+                oracle_trial_df[["animal_id", "scan_session", "scan_idx", "condition_hash"]]
                 .drop_duplicates()
                 .reset_index(drop=True)
             )
