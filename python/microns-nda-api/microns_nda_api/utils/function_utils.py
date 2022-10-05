@@ -30,7 +30,7 @@ def pcorr(x, y):
         x: 2D numpy array， (n_features, n_samples)
         y: 2D numpy array， (n_features, n_samples)
     Returns:
-        pairwise_correlation: 1D numpy array， (n_samples,)
+        pairwise_correlation: 1D numpy array， (n_features,)
     """
     x = np.atleast_2d(np.array(x, dtype=np.float64))
     y = np.atleast_2d(np.array(y, dtype=np.float64))
@@ -72,5 +72,29 @@ def xcorr_p(x, n_perm=1000, rng=np.random.default_rng(0), replace=True, pbar=Tru
         perm_mat = np.stack([rng.choice(v, v.shape, replace=replace) for v in x], axis=0)
         perm_small += np.corrcoef(perm_mat) < rho
         perm_large += np.corrcoef(perm_mat) > rho
+    p = (np.min(np.stack([perm_small, perm_large]), axis=0) * 2 + 1) / n_perm
+    return rho, p
+
+def pcorr_p(x, y, n_perm=1000, rng=np.random.default_rng(0), replace=True, pbar=True):
+    """Compute the pairwise correlation of X and Y and its permutation p value
+
+    Args:
+        x (2D numpy array): (n_features, n_samples)
+        y (2D numpy array): (n_features, n_samples)
+        n_perm (int, optional): Number of permutations. Defaults to 1000.
+        rng (np.random.Generator, optional): Random number generator. Defaults to np.random.default_rng(0).
+        replace (bool, optional): Whether to sample with replacement. Defaults to True.
+    """
+    x = np.atleast_2d(np.array(x, dtype=np.float64))
+    y = np.atleast_2d(np.array(y, dtype=np.float64))
+    rho = pcorr(x, y)
+    perm_small = np.zeros(x.shape[0])
+    perm_large = np.zeros(x.shape[0])
+
+    for _ in tqdm(range(n_perm), disable=not pbar):
+        perm_x = np.stack([rng.choice(v, v.shape, replace=replace) for v in x], axis=0)
+        perm_y = np.stack([rng.choice(v, v.shape, replace=replace) for v in x], axis=0)
+        perm_small += pcorr(perm_x, perm_y) < rho
+        perm_large += pcorr(perm_x, perm_y) > rho
     p = (np.min(np.stack([perm_small, perm_large]), axis=0) * 2 + 1) / n_perm
     return rho, p

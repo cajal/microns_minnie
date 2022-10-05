@@ -7,7 +7,7 @@ from tqdm import tqdm
 import decimal
 
 from ..config import minnie_function_config as config
-from ..utils.function_utils import pcorr, xcorr
+from ..utils.function_utils import pcorr, xcorr, pcorr_p
 from ..utils import datajoint_utils
 from . import minnie_nda
 from microns_nda_api.utils import function_utils
@@ -827,6 +827,7 @@ class DynamicModel(djp.Lookup, MakerMixin):
         ro_weight            : longblob                     # readout weight, [head, feature]
         """
 
+
 @schema
 class DynamicModelScore(djp.Lookup, MakerMixin):
     hash_part_table_names = True
@@ -969,7 +970,9 @@ class RespArrNnsV10(djp.Manual):
         """
 
     class Condition(djp.Part):
-        stimulus = djp.create_dj_virtual_module("pipeline_stimulus", "pipeline_stimulus")
+        stimulus = djp.create_dj_virtual_module(
+            "pipeline_stimulus", "pipeline_stimulus"
+        )
         definition = """
         -> master
         -> djp.create_dj_virtual_module('pipeline_stimulus', 'pipeline_stimulus').Condition
@@ -1080,7 +1083,9 @@ class RunningID(djp.Lookup):
             scan_dataset = djp.create_dj_virtual_module(
                 "scan_dataset", "dv_scans_v3_scan_dataset"
             )
-            stimulus = djp.create_dj_virtual_module("pipeline_stimulus", "pipeline_stimulus")
+            stimulus = djp.create_dj_virtual_module(
+                "pipeline_stimulus", "pipeline_stimulus"
+            )
             rel = (
                 scan.Behavior.Trial
                 * scan.Response.Trial
@@ -1124,12 +1129,15 @@ class Running(djp.Computed):
 
 
 scan3 = djp.create_dj_virtual_module("scan", "dv_scans_v3_scan")
+
+
 @datajoint_utils.config_table(schema, config_type="beh_mod")
-class BehModConfig(djp.Lookup):
+class LocCorrConfig(djp.Lookup):
     """
     Configuration for computing behavior modulation for single neurons
     """
-    class LocCorrScan3(djp.Part):
+
+    class Scan3(djp.Part):
         definition = """
         -> master
         ---
@@ -1138,6 +1146,8 @@ class BehModConfig(djp.Lookup):
         -> scan3.ResponseId
         -> scan3.ValidId
         binning_window    : decimal(4,2)            # binning window in seconds
+        n_perm            : int unsigned            # number of permutations
+        seed              : int unsigned            # random seed
         """
         content = [
             {
@@ -1146,6 +1156,8 @@ class BehModConfig(djp.Lookup):
                 "behavior_id": 0,
                 "response_id": 1,
                 "valid_id": 0,
+                "n_perm": 1000,
+                "seed": 0,
             },
         ]
 
@@ -1199,14 +1211,20 @@ class BehModConfig(djp.Lookup):
             )
             treadmill = np.concatenate(data[f"treadmill"].values)
             response = np.concatenate(data[f"response"].values)
-            unit_df[f"beh_mod"] = [stats.pearsonr(treadmill, r)[0] for r in response.T]
+            treadmill = np.repeat(treadmill, response.shape[1], axis=0)
+            unit_df[f"beh_mod"], unit_df[f"bhe_mod_p"] = pcorr_p(
+                treadmill,
+                response.T,
+                n_perm=params["n_perm"],
+                rng=np.random.default_rng(params["seed"]),
+            )
             return unit_df
 
 
 @schema
-class BehMod(djp.Computed):
+class LocCorr(djp.Computed):
     definition = """
-    -> BehModConfig
+    -> LocCorrConfig
     -> minnie_nda.Scan
     """
 
@@ -1216,14 +1234,17 @@ class BehMod(djp.Computed):
         -> minnie_nda.UnitSource
         ---
         beh_mod            : float                 # behavior modulation
+        p_permute          : float                 # p-value from permutation test
         """
 
-    key_source = BehModConfig * minnie_nda.Scan & ScanSet.Member
+    key_source = LocCorrConfig * minnie_nda.Scan & ScanSet.Member
 
     def make(self, key):
-        unit_df = (BehModConfig & key).part_table().compute(scan_key=key)
+        unit_df = (LocCorrConfig & key).part_table().compute(scan_key=key)
         self.insert1(key)
-        self.Unit().insert(unit_df.to_dict("records"), ignore_extra_fields=True)
+        self.Unit().insert(
+            [{**d, **key} for d in unit_df.to_dict("records")], ignore_extra_fields=True
+        )
 
 
 @datajoint_utils.config_table(schema, config_type="noise_corr")
@@ -1238,11 +1259,15 @@ class NoiseCorrConfig(djp.Lookup):
         -> scan3.ValidId
         -> stimulus.Condition
         binning_window    : decimal(4,2)            # binning window in seconds
+        n_perm            : int unsigned            # number of permutations
+        seed              : int unsigned            # random seed
         """
         content = [
             {
                 **d,
                 "binning_window": decimal.Decimal("0.50"),
+                "n_perm": 1000,
+                "seed": 0,
                 "timing_id": 0,
                 "behavior_id": 0,
                 "response_id": 1,
@@ -1255,10 +1280,12 @@ class NoiseCorrConfig(djp.Lookup):
 
         def compute(self, scan_key):
             params = self.fetch1()
-            binning_window= float(params["binning_window"])
+            binning_window = float(params["binning_window"])
 
             unit_df = pd.DataFrame(
-                (scan3.Unit & params & scan_key).proj(..., scan_session='session').fetch(
+                (scan3.Unit & params & scan_key)
+                .proj(..., scan_session="session")
+                .fetch(
                     "animal_id",
                     "scan_session",
                     "scan_idx",
@@ -1268,25 +1295,28 @@ class NoiseCorrConfig(djp.Lookup):
                     as_dict=True,
                 )
             )
-            unit_df['corr_idx'] = unit_df['response_index']
+            unit_df["corr_idx"] = unit_df["response_index"]
 
             oracle_trials = (
-                scan3.Response.Trial
-                * scan3.Valid.Trial
-                * scan3.TimingId
-                * scan3.TimingInfo
-                * stimulus.Trial
-                * stimulus.Condition
-            ).proj(..., scan_session="session") & params & "valid" & scan_key
-            response, hz = oracle_trials.fetch(
-                "response", "hz"
+                (
+                    scan3.Response.Trial
+                    * scan3.Valid.Trial
+                    * scan3.TimingId
+                    * scan3.TimingInfo
+                    * stimulus.Trial
+                    * stimulus.Condition
+                ).proj(..., scan_session="session")
+                & params
+                & "valid"
+                & scan_key
             )
+            response, hz = oracle_trials.fetch("response", "hz")
             assert len(np.unique(hz)) == 1
             hz = hz[0]
             w = int(np.ceil(binning_window * hz))
             # bin response
             response = [
-                np.mean(r[:len(r)//w*w].reshape(-1, w, r.shape[1]), axis=1)
+                np.mean(r[: len(r) // w * w].reshape(-1, w, r.shape[1]), axis=1)
                 for r in response
             ]
             response = np.stack(response, axis=0)  # n_trials x n_bins x n_units
@@ -1294,9 +1324,11 @@ class NoiseCorrConfig(djp.Lookup):
             response = response - np.mean(response, axis=0, keepdims=True)
             # z-score single trial residues
             response_z = stats.zscore(response, axis=1)
-            response_z = response_z.reshape(-1, response_z.shape[-1])  # n_trials*n_bins x n_units
-            rho, p = function_utils.xcorr_p(response_z.T)
-            rho, p = squareform(rho,checks=False), squareform(p, checks=False)
+            response_z = response_z.reshape(
+                -1, response_z.shape[-1]
+            )  # n_trials*n_bins x n_units
+            rho, p = function_utils.xcorr_p(response_z.T, n_perm=params["n_perm"], rng=np.random.default_rng(params["seed"]))
+            rho, p = squareform(rho, checks=False), squareform(p, checks=False)
 
             return unit_df, rho, p
 
@@ -1310,6 +1342,8 @@ class NoiseCorrConfig(djp.Lookup):
         -> scan3.ValidId
         binning_window    : decimal(4,2)            # binning window in seconds
         min_repeat        : int                     # minimum number of repeats to be considered
+        n_perm            : int unsigned            # number of permutations
+        seed              : int unsigned            # random seed
         """
         content = [
             {
@@ -1319,15 +1353,19 @@ class NoiseCorrConfig(djp.Lookup):
                 "response_id": 1,
                 "valid_id": 0,
                 "min_repeat": 4,
+                "n_perm": 1000,
+                "seed": 0,
             },
         ]
 
         def compute(self, scan_key):
             params = self.fetch1()
-            binning_window= float(params["binning_window"])
+            binning_window = float(params["binning_window"])
 
             unit_df = pd.DataFrame(
-                (scan3.Unit & params & scan_key).proj(..., scan_session='session').fetch(
+                (scan3.Unit & params & scan_key)
+                .proj(..., scan_session="session")
+                .fetch(
                     "animal_id",
                     "scan_session",
                     "scan_idx",
@@ -1337,7 +1375,7 @@ class NoiseCorrConfig(djp.Lookup):
                     as_dict=True,
                 )
             )
-            unit_df['corr_idx'] = unit_df['response_index']
+            unit_df["corr_idx"] = unit_df["response_index"]
 
             oracle_trial = (
                 scan3.Response.Trial
@@ -1349,45 +1387,59 @@ class NoiseCorrConfig(djp.Lookup):
                 & "valid"
                 & params
                 & scan_key
-            ).proj(..., scan_session='session')
+            ).proj(..., scan_session="session")
             oracle_trial_df = pd.DataFrame(
                 oracle_trial.fetch(
-                    "animal_id", "scan_session", "scan_idx", "condition_hash", "response", "hz", as_dict=True
+                    "animal_id",
+                    "scan_session",
+                    "scan_idx",
+                    "condition_hash",
+                    "response",
+                    "hz",
+                    as_dict=True,
                 )
             )
             # bin to 500ms
             assert len(oracle_trial_df.hz.unique()) == 1
             hz = oracle_trial_df.hz.unique()[0]
             bins = int(np.ceil(hz * binning_window))
-            oracle_trial_df["response"] = oracle_trial_df.response.apply(lambda x : np.mean(x[:x.shape[0]//bins*bins,:].reshape(-1, x.shape[1], bins), axis=-1))
+            oracle_trial_df["response"] = oracle_trial_df.response.apply(
+                lambda x: np.mean(
+                    x[: x.shape[0] // bins * bins, :].reshape(-1, x.shape[1], bins),
+                    axis=-1,
+                )
+            )
             oracle_df = (
-                oracle_trial_df[["animal_id", "scan_session", "scan_idx", "condition_hash"]]
+                oracle_trial_df[
+                    ["animal_id", "scan_session", "scan_idx", "condition_hash"]
+                ]
                 .drop_duplicates()
                 .reset_index(drop=True)
             )
 
             oracle_df = oracle_df.merge(
                 oracle_trial_df.groupby("condition_hash")
-                .apply(
-                    lambda df: np.stack(df["response"], axis=0)
-                )
+                .apply(lambda df: np.stack(df["response"], axis=0))
                 .to_frame("single_trial")
                 .reset_index()
             )
-            oracle_df = oracle_df.loc[oracle_df.single_trial.apply(lambda x : x.shape[0]) >= params["min_repeat"]]
-            oracle_df['mean'] = oracle_df['single_trial'].apply(
+            oracle_df = oracle_df.loc[
+                oracle_df.single_trial.apply(lambda x: x.shape[0])
+                >= params["min_repeat"]
+            ]
+            oracle_df["mean"] = oracle_df["single_trial"].apply(
                 lambda row: row.mean(axis=0)
             )
-            oracle_df['residue'] = oracle_df['single_trial'] - oracle_df['mean']
-            oracle_df['residue_z'] = oracle_df['residue'].apply(
-                lambda row: stats.zscore(row, axis=0)
+            oracle_df["residue"] = oracle_df["single_trial"] - oracle_df["mean"]
+            oracle_df["residue_z"] = oracle_df["residue"].apply(
+                lambda row: stats.zscore(row, axis=1)
             )
-            oracle_df['residue_z'] = oracle_df['residue_z'].apply(
+            oracle_df["residue_z"] = oracle_df["residue_z"].apply(
                 lambda row: row.reshape(-1, row.shape[-1])
             )
-            residue_z = np.concatenate(oracle_df['residue_z'].to_numpy())
-            rho, p = function_utils.xcorr_p(residue_z.T)
-            rho, p = squareform(rho,checks=False), squareform(p, checks=False)
+            residue_z = np.concatenate(oracle_df["residue_z"].to_numpy())
+            rho, p = function_utils.xcorr_p(residue_z.T, n_perm=params["n_perm"], rng=np.random.default_rng(params["seed"]))
+            rho, p = squareform(rho, checks=False), squareform(p, checks=False)
             return unit_df, rho, p
 
 
@@ -1410,15 +1462,14 @@ class NoiseCorr(djp.Computed):
         definition = """
         -> master
         ---
-        corr_matrix        : blob@corr_array          # correlation matrix
-        p_matrix           : blob@corr_array          # p-value matrix from permutation test, stored in vector-form
+        corr_matrix        : blob@corr_array          # correlation matrix, stored in vector form
+        p_matrix           : blob@corr_array          # p-value matrix, stored in vector form
         """
 
     @property
     def key_source(self):
         scan_oracle = (
-            ScanSet.Member.proj(session="scan_session")
-            * stimulus.Condition
+            ScanSet.Member.proj(session="scan_session") * stimulus.Condition
         ) & (stimulus.Trial & (stimulus.Clip * netflix.OracleSet))
         return NoiseCorrConfig * minnie_nda.Scan & [
             scan_oracle.proj(scan_session="session") * NoiseCorrConfig.Scan3OracleCond,
@@ -1430,7 +1481,9 @@ class NoiseCorr(djp.Computed):
             NoiseCorrConfig().part_table(key).compute(scan_key=key)
         )
         self.insert1(key)
-        self.Unit().insert([{**key, **d} for d in unit_df.to_dict("records")], ignore_extra_fields=True)
+        self.Unit().insert(
+            [{**key, **d} for d in unit_df.to_dict("records")], ignore_extra_fields=True
+        )
         self.CorrMatrix().insert1(dict(key, corr_matrix=corr_matrix, p_matrix=p_matrix))
 
 
