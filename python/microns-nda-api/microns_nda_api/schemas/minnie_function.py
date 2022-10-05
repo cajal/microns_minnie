@@ -1211,7 +1211,7 @@ class LocCorrConfig(djp.Lookup):
             )
             treadmill = np.concatenate(data[f"treadmill"].values)
             response = np.concatenate(data[f"response"].values)
-            treadmill = np.repeat(treadmill, response.shape[1], axis=0)
+            treadmill = np.repeat(treadmill[:, None], response.shape[1], axis=1)
             unit_df[f"beh_mod"], unit_df[f"bhe_mod_p"] = pcorr_p(
                 treadmill,
                 response.T,
