@@ -239,6 +239,8 @@ class OrientationDV231042(djp.Manual):
             unit_df["pref_ori"] = (
                 -unit_df["pref_ori"] + np.pi / 2
             ) % np.pi  # convert to clock convention (horizontal bar moving upward is 0 and orientation increases clockwise)
+        else:
+            unit_df["pref_ori"] = unit_df["pref_ori"] % np.pi
         return unit_df
 
     def selectivity(self, unit_key=None, percentile=True):
@@ -573,6 +575,39 @@ class OracleTuneMovieOracle(djp.Manual):
             & (self.Unit & key)
         ).proj(oracle="pearson")
 
+@schema
+class Nn10Reliability(djp.Manual):
+    definition = """
+    # reliability score computed with dynamic vision nns v10
+    animal_id            : int                          # id number
+    scan_session         : smallint                     # session index for the mouse
+    scan_idx             : smallint                     # number of TIFF stack file
+    stimulus_to_response : smallint unsigned            # ratio of stimulus hz to response hz
+    start_index          : smallint unsigned            # index of first sampled response
+    response_hash        : varchar(256)                 # unique identifier for response configuration
+    transform_hash       : varchar(256)                 # unique identifier for transform configuration
+    reliability_hash     : varchar(256)                 # unique identifier for reliability configuration
+    trial_group_hash     : varchar(256)                 # unique identifier for trial group grouping  
+    """
+
+    class Unit(djp.Part):
+        definition = """
+        -> master
+        -> minnie_nda.UnitSource
+        ---
+        reliability        : float                        # unit reliability score
+        """
+    
+    def scan(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return (self & key).fetch("animal_id", "scan_session", "scan_idx")
+
+    def oracle(self, key=None):
+        key = self.fetch() if key is None else (self & key).fetch()
+        return (
+            dj.U(*minnie_nda.UnitSource.heading.primary_key, "reliability")
+            & (self.Unit & key)
+        ).proj(oracle="reliability")
 
 ## Aggregation tables
 @schema
@@ -657,6 +692,27 @@ class Oracle(djp.Lookup):
         def oracle(self, key=None):
             key = self.fetch() if key is None else (self & key).fetch()
             return (self.source & key).oracle()
+    
+    class Nn10Reliability(djp.Part):
+        _source = "Nn10Reliability"
+        source = eval(_source)
+        enable_hashing = True
+        hash_name = "oracle_hash"
+        hashed_attrs = source.primary_key
+        definition = """
+        #
+        -> master
+        ---
+        -> OracleTuneMovieOracle
+        """
+
+        def scan(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).scan()
+
+        def oracle(self, key=None):
+            key = self.fetch() if key is None else (self & key).fetch()
+            return (self.source & key).oracle()
 
 
 @schema
@@ -718,6 +774,9 @@ class DynamicModel(djp.Lookup, MakerMixin):
     def readout(self, part_key=None):
         return (self.maker() & self).readout(part_key)
 
+    def readout_location(self, part_key=None):
+        return (self.maker() & self).readout_location(part_key)
+
     class NnsV5(djp.Part):
         definition = """
         # dynamic model saved in `dv_nns_v5_scan.__scan_model`
@@ -741,6 +800,9 @@ class DynamicModel(djp.Lookup, MakerMixin):
         def readout(self, part_key=None):
             part_key = {} if part_key is None else part_key
             return DynamicModel.NnsV5UnitReadout & self & part_key
+        
+        def readout_location(self, part_key=None):
+            raise NotImplementedError
 
     class NnsV5UnitReadout(djp.Part):
         definition = """
@@ -779,6 +841,12 @@ class DynamicModel(djp.Lookup, MakerMixin):
         def readout(self, part_key=None):
             part_key = {} if part_key is None else part_key
             return DynamicModel.NnsV10ScanV3UniqueUnitReadout & self & part_key
+        
+        def readout_location(self, part_key=None):
+            scan3_perspective = dj.FreeTable(
+                dj.conn(), '`dv_nns_v10_scan`.`__perspective__unit`'
+            )
+            return scan3_perspective & self
 
     class NnsV10ScanV3UniqueUnitReadout(djp.Part):
         definition = """
@@ -815,6 +883,11 @@ class DynamicModel(djp.Lookup, MakerMixin):
         def readout(self, part_key=None):
             part_key = {} if part_key is None else part_key
             return DynamicModel.NnsV10ScanV3UniqueUnitReadout & self & part_key
+        def readout_location(self, part_key=None):
+            scan3_perspective = dj.FreeTable(
+                dj.conn(), '`dv_nns_v10_scan`.`__perspective__unit`'
+            )
+            return scan3_perspective & self
 
     class NnsV10ScanV3AllUnitReadout(djp.Part):
         definition = """
@@ -948,6 +1021,12 @@ class DynamicModelScanSet(djp.Lookup):
             (DynamicModel & (self.Member().proj() & self.proj())).proj().fetch()
         )
         return (DynamicModelScore & master_key).unit_score(part_key)
+
+    def readout_location(self, part_key=None):
+        master_key = (
+            (DynamicModel & (self.Member().proj() & self.proj())).proj().fetch()
+        )
+        return (DynamicModel & master_key).readout_location(part_key)
 
 
 # WIP
@@ -1131,7 +1210,7 @@ class Running(djp.Computed):
 scan3 = djp.create_dj_virtual_module("scan", "dv_scans_v3_scan")
 
 
-@datajoint_utils.config_table(schema, config_type="beh_mod")
+@datajoint_utils.config_table(schema, config_type="loc_corr")
 class LocCorrConfig(djp.Lookup):
     """
     Configuration for computing behavior modulation for single neurons
@@ -1161,7 +1240,7 @@ class LocCorrConfig(djp.Lookup):
             },
         ]
 
-        def compute(self, scan_key):
+        def load_data(self, scan_key):
             params = self.fetch1()
             binning_window = float(self.fetch1("binning_window"))
             rel = (
@@ -1187,19 +1266,12 @@ class LocCorrConfig(djp.Lookup):
                     as_dict=True,
                 )
             )
-
             # restrict behavior to treadmill only
             data["behavior"] = data["behavior"].apply(lambda b: b[:, 2])
             data["treadmill"] = data["behavior"]
             del data["behavior"]
-            hz = float(np.unique(data["hz"].values))
-
-            unit_df = pd.DataFrame(
-                (scan3.Unit().proj(..., scan_session="session") & scan_key).fetch(
-                    as_dict=True, order_by="response_index"
-                )
-            )
             # bin treadmill and response
+            hz = float(np.unique(data["hz"].values))
             w = int(np.ceil(binning_window * hz))
             data["treadmill"] = data["treadmill"].apply(
                 lambda x: np.mean(x[: int(len(x) // w * w)].reshape(-1, w), axis=1)
@@ -1209,6 +1281,16 @@ class LocCorrConfig(djp.Lookup):
                     x[: int(len(x) // w * w), :].reshape(-1, w, x.shape[1]), axis=1
                 )
             )
+            unit_df = pd.DataFrame(
+                (scan3.Unit().proj(..., scan_session="session") & scan_key).fetch(
+                    as_dict=True, order_by="response_index"
+                )
+            )
+            return data, unit_df 
+
+        def compute(self, scan_key):
+            params = self.fetch1()
+            data, unit_df = self.load_data(scan_key)
             treadmill = np.concatenate(data[f"treadmill"].values)
             response = np.concatenate(data[f"response"].values)
             treadmill = np.repeat(treadmill[None,:], response.shape[1], axis=0)
@@ -1233,7 +1315,7 @@ class LocCorr(djp.Computed):
         -> master
         -> minnie_nda.UnitSource
         ---
-        beh_mod            : float                 # behavior modulation
+        loc_corr           : float                 # correlation between running and response
         p_permute          : float                 # p-value from permutation test
         """
 
