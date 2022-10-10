@@ -588,6 +588,30 @@ class OracleTuneMovieOracle(minnie_function.OracleTuneMovieOracle, VMMixin):
         ).proj(..., scan_session="session")
         cls.Unit.insert(unit_rel, skip_duplicates=True, ignore_extra_fields=True)
 
+class Nn10Reliability(minnie_function.Nn10Reliability, VMMixin):
+
+    virtual_module_dict = {
+        "dv_scan": "dv_nns_v10_scan"
+    }
+
+    class Unit(minnie_function.Nn10Reliability.Unit):
+        pass
+    
+    @classmethod
+    def fill(cls):
+        cls.spawn_virtual_modules(cls.virtual_module_dict)
+        scan_keys = minnie_nda.Scan.fetch("KEY")
+        scan_keys = [
+            {**key, "segmentation_method": 6, "spike_method": 5} for key in scan_keys
+        ]
+        scan_rel = dj.U(*cls.heading) & (
+            cls.virtual_modules["dv_scan"].Reliability & scan_keys
+        ).proj(..., scan_session="session")
+        cls.insert(scan_rel, skip_duplicates=True, ignore_extra_fields=True)
+        unit_rel = dj.U(*cls.Unit.heading) & (
+            cls.virtual_modules["dv_scan"].Reliability.Unit & scan_keys
+        ).proj(..., scan_session="session")
+        cls.Unit.insert(unit_rel, skip_duplicates=True, ignore_extra_fields=True)
 
 class Oracle(minnie_function.Oracle):
     @classmethod
@@ -632,6 +656,24 @@ class Oracle(minnie_function.Oracle):
             )
 
     class TuneMovieOracle(minnie_function.Oracle.TuneMovieOracle):
+        @classproperty
+        def source(cls):
+            return eval(super()._source)
+
+        @classmethod
+        def fill(cls):
+            constant_attrs = {
+                "oracle_type": cls.source.__name__,
+            }
+            cls.insert(
+                cls.source,
+                insert_to_master=True,
+                constant_attrs=constant_attrs,
+                ignore_extra_fields=True,
+                skip_duplicates=True,
+            )
+    
+    class Nn10Reliability(minnie_function.Oracle.Nn10Reliability):
         @classproperty
         def source(cls):
             return eval(super()._source)
