@@ -1669,6 +1669,7 @@ class NoiseCorr(djp.Computed):
         return NoiseCorrConfig * minnie_nda.Scan & [
             scan_oracle.proj(scan_session="session") * NoiseCorrConfig.Scan3OracleCond,
             scan_oracle.proj(scan_session="session") * NoiseCorrConfig.Scan3Oracle,
+            scan_oracle.proj(scan_session="session") * NoiseCorrConfig.Scan3Repeat,
         ]
 
     def make(self, key):
