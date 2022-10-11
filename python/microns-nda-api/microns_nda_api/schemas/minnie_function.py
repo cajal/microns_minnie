@@ -1524,6 +1524,119 @@ class NoiseCorrConfig(djp.Lookup):
             rho, p = squareform(rho, checks=False), squareform(p, checks=False)
             return unit_df, rho, p
 
+    class Scan3Repeat(djp.Part):
+        definition = """ # noise correlation computed with 2 repeats clips
+        -> master
+        ---
+        -> scan3.TimingId
+        -> scan3.BehaviorId
+        -> scan3.ResponseId
+        -> scan3.ValidId
+        binning_window    : decimal(4,2)            # binning window in seconds
+        min_repeat        : int                     # minimum number of repeats to be considered
+        n_perm            : int unsigned            # number of permutations
+        seed              : int unsigned            # random seed
+        """
+        content = [
+            {
+                "binning_window": decimal.Decimal("0.50"),
+                "timing_id": 0,
+                "behavior_id": 0,
+                "response_id": 1,
+                "valid_id": 0,
+                "min_repeat": 4,
+                "n_perm": 1000,
+                "seed": 0,
+            },
+        ]
+
+        def compute(self, scan_key):
+            netflix = dj.create_virtual_module('netflix', 'pipeline_netflix')
+            repeat_clip = stimulus.Clip & netflix.RepeatSet()
+            params = self.fetch1()
+            binning_window = float(params["binning_window"])
+
+            unit_df = pd.DataFrame(
+                (scan3.Unit & params & scan_key)
+                .proj(..., scan_session="session")
+                .fetch(
+                    "animal_id",
+                    "scan_session",
+                    "scan_idx",
+                    "unit_id",
+                    "response_index",
+                    order_by="response_index",
+                    as_dict=True,
+                )
+            )
+            unit_df["corr_idx"] = unit_df["response_index"]
+
+            trials = (
+                scan3.Response.Trial
+                * scan3.Valid.Trial
+                * scan3.TimingId
+                * scan3.TimingInfo
+                * stimulus.Trial
+                * stimulus.Condition
+                & "valid"
+                & params
+                & scan_key
+            ).proj(..., scan_session="session")
+            repeat_cond = stimulus.Condition.aggr(trials.proj(), repeats="count(*)") & "repeats > 1" & repeat_clip
+            repeat_trial = trials & repeat_cond.proj()
+            repeat_trial_df = pd.DataFrame(
+                repeat_trial.fetch(
+                    "animal_id",
+                    "scan_session",
+                    "scan_idx",
+                    "condition_hash",
+                    "response",
+                    "hz",
+                    as_dict=True,
+                )
+            )
+            # bin to 500ms
+            repeat_trial_df = pd.DataFrame(
+                repeat_trial.fetch(
+                    "animal_id", "session", "scan_idx", "condition_hash", "response", "hz", as_dict=True
+                )
+            )
+            # bin to 500ms
+            assert len(repeat_trial_df.hz.unique()) == 1
+            hz = repeat_trial_df.hz.unique()[0]
+            bins = int(np.ceil(hz * binning_window))
+            repeat_trial_df["response"] = repeat_trial_df.response.apply(lambda x : np.mean(x[:x.shape[0]//bins*bins,:].reshape(-1, x.shape[1], bins), axis=-1))
+            repeat_df = (
+                repeat_trial_df[["animal_id", "session", "scan_idx", "condition_hash"]]
+                .drop_duplicates()
+                .reset_index(drop=True)
+            )
+
+            repeat_df = repeat_df.merge(
+                repeat_trial_df.groupby("condition_hash")
+                .apply(
+                    lambda df: np.stack(df["response"], axis=0)
+                )
+                .to_frame("single_trial")
+                .reset_index()
+            )
+
+            repeat_df['mean'] = repeat_df['single_trial'].apply(
+                lambda row: row.mean(axis=0)
+            )
+            repeat_df['residue'] = repeat_df['single_trial'] - repeat_df['mean']
+            # z-score the residue
+            repeat_df['residue_z'] = repeat_df['residue'].apply(
+                lambda row: stats.zscore(row, axis=1)
+            )
+            # concatenate all residue
+            repeat_df['residue_z'] = repeat_df['residue_z'].apply(
+                lambda row: row.reshape(-1, row.shape[-1])
+            )
+            residue_z = np.concatenate(repeat_df["residue_z"].to_numpy())
+            rho, p = function_utils.xcorr_p(residue_z.T, n_perm=params["n_perm"], rng=np.random.default_rng(params["seed"]))
+            rho, p = squareform(rho, checks=False), squareform(p, checks=False)
+            return unit_df, rho, p
 
 @schema
 class NoiseCorr(djp.Computed):
