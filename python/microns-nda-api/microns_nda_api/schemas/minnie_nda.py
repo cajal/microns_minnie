@@ -480,4 +480,4 @@ class UnitSource(djp.Manual):
 
 
 schema.spawn_missing_classes()
-schema.connection.dependencies.load()
+
