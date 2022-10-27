@@ -169,7 +169,9 @@ def grouping_table(schema, source, ordered=False, hash_comment=None, aggregator=
     return decorator
 
 
-def config_table(schema, hash_comment=None, config_type=None):
+def config_table(
+    schema, hash_comment=None, config_type=None, spawn_missing_parts=False
+):
     def decorator(cls):
         nonlocal hash_comment
         table_name = cls().__class__.__name__
@@ -192,10 +194,22 @@ def config_table(schema, hash_comment=None, config_type=None):
             ct=cls.config_type, cn=cls.hash_name, tn=table_name, descr=hash_comment
         )
         schema(cls, context=schema.context or inspect.currentframe().f_back.f_locals)
+        if spawn_missing_parts:
+            cls.part_classes = cls.parts(as_cls=True)
+        else:
+            cls.part_classes = [
+                getattr(cls, p)
+                for p in list(
+                    filter(
+                        lambda x: issubclass(getattr(cls, x), dj.Part),
+                        filter(lambda x: inspect.isclass(getattr(cls, x)), dir(cls)),
+                    )
+                )
+            ]
 
         @staticmethod
         def fill():
-            for rel in cls.parts(as_cls=True):
+            for rel in cls.part_classes:
                 log.info("Checking " + rel.__name__)
                 keys_df = pd.DataFrame(
                     data=[c for c in rel().content if len(rel & c) == 0],
@@ -221,8 +235,8 @@ def config_table(schema, hash_comment=None, config_type=None):
         @staticmethod
         def clean():
             ctype = "{}_type".format(cls.config_type)
-            keys = cls & [{ctype: p.__name__} for p in cls.parts(as_cls=True)]
-            invalid = (keys - cls.parts(as_cls=True)).fetch("KEY")
+            keys = cls & [{ctype: p.__name__} for p in cls.part_classes]
+            invalid = (keys - cls.part_classes).fetch("KEY")
             (cls & invalid).delete()
 
         def part_type(self, key=None):
@@ -282,7 +296,7 @@ def config_table(schema, hash_comment=None, config_type=None):
 
             return part_cls
 
-        for part in cls.parts(as_cls=True):
+        for part in cls.part_classes:
             setattr(cls, part.__name__, configure_part(part))
 
         def modify_header(cls):
@@ -309,7 +323,7 @@ def config_table(schema, hash_comment=None, config_type=None):
                 )
 
         modify_header(cls)
-        for part in cls.parts(as_cls=True):
+        for part in cls.part_classes:
             modify_header(part)
         return cls
 
