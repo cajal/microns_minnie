@@ -6,6 +6,8 @@ from scipy import stats
 from tqdm import tqdm
 import decimal
 
+from functools import cached_property
+
 from ..config import minnie_function_config as config
 from ..utils.function_utils import pcorr, xcorr, pcorr_p
 from ..utils import datajoint_utils
@@ -20,7 +22,6 @@ config.register_externals()
 config.register_adapters(context=locals())
 
 schema = dj.schema(config.schema_name, create_schema=True)
-# schema.connection.dependencies.load()
 
 # Utility mixins
 class MakerMixin:
@@ -1085,27 +1086,27 @@ class RespCorr(djp.Lookup):
             "resp_array_idx",
         ]
 
-        def get_resp_array(self):
+        @property
+        def resp_array(self):
             key = self.fetch1("KEY")
             if not (
                 hasattr(self.__class__, "_cache_key")
                 and self.__class__._cache_key == key
             ):
-                self.__class__._cache_key = key
                 self.__class__._cache_resp_array = (RespArrNnsV10 & self).fetch1(
                     "resp_array"
                 )
+                self.__class__._cache_key = key
             return self.__class__._cache_resp_array
 
         def get_resp(self, unit_df):
             unit_index_df = (
                 (RespArrNnsV10.Unit & self).fetch(format="frame").reset_index()
             )
-            resp_array = self.get_resp_array()
             row_idx = unit_df.merge(unit_index_df, how="left")[
                 ["row_idx"]
             ].values.squeeze()
-            return resp_array[row_idx, :]
+            return self.resp_array[row_idx, :]
 
         def get_corr(self, unit_df1, unit_df2, max_batch_size=100_000):
             # unit_df = (RespArrNnsV10.Unit & self).fetch(format='frame').reset_index()
@@ -1681,7 +1682,3 @@ class NoiseCorr(djp.Computed):
             [{**key, **d} for d in unit_df.to_dict("records")], ignore_extra_fields=True
         )
         self.CorrMatrix().insert1(dict(key, corr_matrix=corr_matrix, p_matrix=p_matrix))
-
-
-schema.spawn_missing_classes()
-# schema.connection.dependencies.load()
