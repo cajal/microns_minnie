@@ -846,7 +846,7 @@ class DynamicModel(djp.Lookup, MakerMixin):
         def readout_location(self, part_key=None):
             scan3_perspective = dj.FreeTable(
                 dj.conn(), '`dv_nns_v10_scan`.`__perspective__unit`'
-            )
+            ).proj(..., scan_session='session')
             return scan3_perspective & self
 
     class NnsV10ScanV3UniqueUnitReadout(djp.Part):
@@ -887,7 +887,7 @@ class DynamicModel(djp.Lookup, MakerMixin):
         def readout_location(self, part_key=None):
             scan3_perspective = dj.FreeTable(
                 dj.conn(), '`dv_nns_v10_scan`.`__perspective__unit`'
-            )
+            ).proj(..., scan_session='session')
             return scan3_perspective & self
 
     class NnsV10ScanV3AllUnitReadout(djp.Part):
