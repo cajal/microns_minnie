@@ -883,7 +883,7 @@ class DynamicModel(djp.Lookup, MakerMixin):
 
         def readout(self, part_key=None):
             part_key = {} if part_key is None else part_key
-            return DynamicModel.NnsV10ScanV3UniqueUnitReadout & self & part_key
+            return DynamicModel.NnsV10ScanV3AllUnitReadout & self & part_key
         def readout_location(self, part_key=None):
             scan3_perspective = dj.FreeTable(
                 dj.conn(), '`dv_nns_v10_scan`.`__perspective__unit`'
