@@ -847,7 +847,9 @@ class DynamicModel(djp.Lookup, MakerMixin):
             scan3_perspective = dj.FreeTable(
                 dj.conn(), '`dv_nns_v10_scan`.`__perspective__unit`'
             ).proj(..., scan_session='session')
-            return scan3_perspective & self
+            rel = scan3_perspective & self
+            rel = rel.proj(..., stimulus_x='stimulus_x * 1960', stimulus_y='stimulus_y * 1080')
+            return rel
 
     class NnsV10ScanV3UniqueUnitReadout(djp.Part):
         definition = """
@@ -888,7 +890,9 @@ class DynamicModel(djp.Lookup, MakerMixin):
             scan3_perspective = dj.FreeTable(
                 dj.conn(), '`dv_nns_v10_scan`.`__perspective__unit`'
             ).proj(..., scan_session='session')
-            return scan3_perspective & self
+            rel = scan3_perspective & self
+            rel = rel.proj(..., stimulus_x='stimulus_x * 1960', stimulus_y='stimulus_y * 1080')
+            return rel 
 
     class NnsV10ScanV3AllUnitReadout(djp.Part):
         definition = """
