@@ -476,3 +476,7 @@ class UnitSource(djp.Manual):
     -> MaskClassification.Type
     -> AreaMembership
     """
+
+
+schema.spawn_missing_classes()
+
