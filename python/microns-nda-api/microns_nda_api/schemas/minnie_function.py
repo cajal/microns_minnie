@@ -59,11 +59,19 @@ class ScanSet(djp.Lookup):
     timestamp=CURRENT_TIMESTAMP : timestamp
     """
 
+    @property
+    def high_quality(self):
+        return self & 'scan_set_hash="b2202f1fb14716994602865748000d8b"'
+
     class Member(djp.Part):
         definition = """
         -> master
         -> minnie_nda.Scan
         """
+
+        @property
+        def high_quality(self):
+            return self & 'scan_set_hash="b2202f1fb14716994602865748000d8b"'
 
 
 @schema
@@ -576,8 +584,9 @@ class OracleTuneMovieOracle(djp.Manual):
             & (self.Unit & key)
         ).proj(oracle="pearson")
 
+
 @schema
-class Nn10Reliability(djp.Manual):
+class Nn10Scan3Rel(djp.Manual):
     definition = """
     # reliability score computed with dynamic vision nns v10
     animal_id            : int                          # id number
@@ -596,9 +605,9 @@ class Nn10Reliability(djp.Manual):
         -> master
         -> minnie_nda.UnitSource
         ---
-        reliability        : float                        # unit reliability score
+        reliability=NULL        : float                        # unit reliability score
         """
-    
+
     def scan(self, key=None):
         key = self.fetch() if key is None else (self & key).fetch()
         return (self & key).fetch("animal_id", "scan_session", "scan_idx")
@@ -609,6 +618,7 @@ class Nn10Reliability(djp.Manual):
             dj.U(*minnie_nda.UnitSource.heading.primary_key, "reliability")
             & (self.Unit & key)
         ).proj(oracle="reliability")
+
 
 ## Aggregation tables
 @schema
@@ -693,9 +703,9 @@ class Oracle(djp.Lookup):
         def oracle(self, key=None):
             key = self.fetch() if key is None else (self & key).fetch()
             return (self.source & key).oracle()
-    
-    class Nn10Reliability(djp.Part):
-        _source = "Nn10Reliability"
+
+    class Nn10Scan3Rel(djp.Part):
+        _source = "Nn10Scan3Rel"
         source = eval(_source)
         enable_hashing = True
         hash_name = "oracle_hash"
@@ -704,7 +714,7 @@ class Oracle(djp.Lookup):
         #
         -> master
         ---
-        -> OracleTuneMovieOracle
+        -> Nn10Scan3Rel
         """
 
         def scan(self, key=None):
@@ -801,7 +811,7 @@ class DynamicModel(djp.Lookup, MakerMixin):
         def readout(self, part_key=None):
             part_key = {} if part_key is None else part_key
             return DynamicModel.NnsV5UnitReadout & self & part_key
-        
+
         def readout_location(self, part_key=None):
             raise NotImplementedError
 
@@ -842,13 +852,15 @@ class DynamicModel(djp.Lookup, MakerMixin):
         def readout(self, part_key=None):
             part_key = {} if part_key is None else part_key
             return DynamicModel.NnsV10ScanV3UniqueUnitReadout & self & part_key
-        
+
         def readout_location(self, part_key=None):
             scan3_perspective = dj.FreeTable(
-                dj.conn(), '`dv_nns_v10_scan`.`__perspective__unit`'
-            ).proj(..., scan_session='session')
+                dj.conn(), "`dv_nns_v10_scan`.`__perspective__unit`"
+            ).proj(..., scan_session="session")
             rel = scan3_perspective & self
-            rel = rel.proj(..., stimulus_x='stimulus_x * 1960', stimulus_y='stimulus_y * 1080')
+            rel = rel.proj(
+                ..., stimulus_x="stimulus_x * 1960", stimulus_y="stimulus_y * 1080"
+            )
             return rel
 
     class NnsV10ScanV3UniqueUnitReadout(djp.Part):
@@ -886,13 +898,16 @@ class DynamicModel(djp.Lookup, MakerMixin):
         def readout(self, part_key=None):
             part_key = {} if part_key is None else part_key
             return DynamicModel.NnsV10ScanV3AllUnitReadout & self & part_key
+
         def readout_location(self, part_key=None):
             scan3_perspective = dj.FreeTable(
-                dj.conn(), '`dv_nns_v10_scan`.`__perspective__unit`'
-            ).proj(..., scan_session='session')
+                dj.conn(), "`dv_nns_v10_scan`.`__perspective__unit`"
+            ).proj(..., scan_session="session")
             rel = scan3_perspective & self
-            rel = rel.proj(..., stimulus_x='stimulus_x * 1960', stimulus_y='stimulus_y * 1080')
-            return rel 
+            rel = rel.proj(
+                ..., stimulus_x="stimulus_x * 1960", stimulus_y="stimulus_y * 1080"
+            )
+            return rel
 
     class NnsV10ScanV3AllUnitReadout(djp.Part):
         definition = """
@@ -990,6 +1005,42 @@ class DynamicModelScore(djp.Lookup, MakerMixin):
         statistic            : float                        # statistic summarizing relationship between scan and behavioral model responses
         """
 
+    class Nns10Scan3UniqueCc(djp.Part):
+        definition = """
+        # Predictive model performance and parameters
+        -> master
+        ---
+        score_hash             : varchar(256)                 # unique identifier for score configuration
+        transform_hash         : varchar(256)                 # unique identifier for transform configuration
+        trial_group_hash       : varchar(256)                 # policy for defining groups of stimulus slices
+        behavior_hash          : varchar(256)                 # nn behavior configuration
+        eye_position           : bool                         # use eye position data
+        behavior               : bool                         # use behavioral data
+        """
+        enable_hashing = True
+        hash_name = "dynamic_score_hash"
+        hashed_attrs = [
+            "score_hash",
+            "transform_hash",
+            "trial_group_hash",
+            "behavior_hash",
+            "dynamic_score_type",
+        ]
+
+        def unit_score(self, part_key=None):
+            part_key = {} if part_key is None else part_key
+            return (
+                (DynamicModelScore.Nns10Scan3UniqueCcUnitScore * self) & part_key
+            ).proj(..., statistic="model_score")
+
+    class Nns10Scan3UniqueCcUnitScore(djp.Part):
+        definition = """
+        -> DynamicModelScore.Nns10Scan3UniqueCc
+        -> minnie_nda.UnitSource
+        ---
+        model_score            : float                        # model score
+        """
+
 
 @schema
 class DynamicModelScanSet(djp.Lookup):
@@ -1021,11 +1072,12 @@ class DynamicModelScanSet(djp.Lookup):
         )
         return (DynamicModel & master_key).readout(part_key)
 
-    def unit_score(self, part_key=None):
+    def unit_score(self, score_key=None, part_key=None):
+        score_key = {} if score_key is None else score_key
         master_key = (
             (DynamicModel & (self.Member().proj() & self.proj())).proj().fetch()
         )
-        return (DynamicModelScore & master_key).unit_score(part_key)
+        return (DynamicModelScore & master_key & score_key).unit_score(part_key)
 
     def readout_location(self, part_key=None):
         master_key = (
@@ -1291,14 +1343,14 @@ class LocCorrConfig(djp.Lookup):
                     as_dict=True, order_by="response_index"
                 )
             )
-            return data, unit_df 
+            return data, unit_df
 
         def compute(self, scan_key):
             params = self.fetch1()
             data, unit_df = self.load_data(scan_key)
             treadmill = np.concatenate(data[f"treadmill"].values)
             response = np.concatenate(data[f"response"].values)
-            treadmill = np.repeat(treadmill[None,:], response.shape[1], axis=0)
+            treadmill = np.repeat(treadmill[None, :], response.shape[1], axis=0)
             unit_df[f"beh_mod"], unit_df[f"p_permute"] = pcorr_p(
                 treadmill,
                 response.T,
@@ -1414,7 +1466,11 @@ class NoiseCorrConfig(djp.Lookup):
             response_z = response_z.reshape(
                 -1, response_z.shape[-1]
             )  # n_trials*n_bins x n_units
-            rho, p = function_utils.xcorr_p(response_z.T, n_perm=params["n_perm"], rng=np.random.default_rng(params["seed"]))
+            rho, p = function_utils.xcorr_p(
+                response_z.T,
+                n_perm=params["n_perm"],
+                rng=np.random.default_rng(params["seed"]),
+            )
             rho, p = squareform(rho, checks=False), squareform(p, checks=False)
 
             return unit_df, rho, p
@@ -1525,7 +1581,11 @@ class NoiseCorrConfig(djp.Lookup):
                 lambda row: row.reshape(-1, row.shape[-1])
             )
             residue_z = np.concatenate(oracle_df["residue_z"].to_numpy())
-            rho, p = function_utils.xcorr_p(residue_z.T, n_perm=params["n_perm"], rng=np.random.default_rng(params["seed"]))
+            rho, p = function_utils.xcorr_p(
+                residue_z.T,
+                n_perm=params["n_perm"],
+                rng=np.random.default_rng(params["seed"]),
+            )
             rho, p = squareform(rho, checks=False), squareform(p, checks=False)
             return unit_df, rho, p
 
@@ -1556,7 +1616,7 @@ class NoiseCorrConfig(djp.Lookup):
         ]
 
         def compute(self, scan_key):
-            netflix = dj.create_virtual_module('netflix', 'pipeline_netflix')
+            netflix = dj.create_virtual_module("netflix", "pipeline_netflix")
             repeat_clip = stimulus.Clip & netflix.RepeatSet()
             params = self.fetch1()
             binning_window = float(params["binning_window"])
@@ -1587,7 +1647,11 @@ class NoiseCorrConfig(djp.Lookup):
                 & params
                 & scan_key
             ).proj(..., scan_session="session")
-            repeat_cond = stimulus.Condition.aggr(trials.proj(), repeats="count(*)") & "repeats > 1" & repeat_clip
+            repeat_cond = (
+                stimulus.Condition.aggr(trials.proj(), repeats="count(*)")
+                & "repeats > 1"
+                & repeat_clip
+            )
             repeat_trial = trials & repeat_cond.proj()
             repeat_trial_df = pd.DataFrame(
                 repeat_trial.fetch(
@@ -1603,14 +1667,25 @@ class NoiseCorrConfig(djp.Lookup):
             # bin to 500ms
             repeat_trial_df = pd.DataFrame(
                 repeat_trial.fetch(
-                    "animal_id", "session", "scan_idx", "condition_hash", "response", "hz", as_dict=True
+                    "animal_id",
+                    "session",
+                    "scan_idx",
+                    "condition_hash",
+                    "response",
+                    "hz",
+                    as_dict=True,
                 )
             )
             # bin to 500ms
             assert len(repeat_trial_df.hz.unique()) == 1
             hz = repeat_trial_df.hz.unique()[0]
             bins = int(np.ceil(hz * binning_window))
-            repeat_trial_df["response"] = repeat_trial_df.response.apply(lambda x : np.mean(x[:x.shape[0]//bins*bins,:].reshape(-1, x.shape[1], bins), axis=-1))
+            repeat_trial_df["response"] = repeat_trial_df.response.apply(
+                lambda x: np.mean(
+                    x[: x.shape[0] // bins * bins, :].reshape(-1, x.shape[1], bins),
+                    axis=-1,
+                )
+            )
             repeat_df = (
                 repeat_trial_df[["animal_id", "session", "scan_idx", "condition_hash"]]
                 .drop_duplicates()
@@ -1619,29 +1694,32 @@ class NoiseCorrConfig(djp.Lookup):
 
             repeat_df = repeat_df.merge(
                 repeat_trial_df.groupby("condition_hash")
-                .apply(
-                    lambda df: np.stack(df["response"], axis=0)
-                )
+                .apply(lambda df: np.stack(df["response"], axis=0))
                 .to_frame("single_trial")
                 .reset_index()
             )
 
-            repeat_df['mean'] = repeat_df['single_trial'].apply(
+            repeat_df["mean"] = repeat_df["single_trial"].apply(
                 lambda row: row.mean(axis=0)
             )
-            repeat_df['residue'] = repeat_df['single_trial'] - repeat_df['mean']
+            repeat_df["residue"] = repeat_df["single_trial"] - repeat_df["mean"]
             # z-score the residue
-            repeat_df['residue_z'] = repeat_df['residue'].apply(
+            repeat_df["residue_z"] = repeat_df["residue"].apply(
                 lambda row: stats.zscore(row, axis=1)
             )
             # concatenate all residue
-            repeat_df['residue_z'] = repeat_df['residue_z'].apply(
+            repeat_df["residue_z"] = repeat_df["residue_z"].apply(
                 lambda row: row.reshape(-1, row.shape[-1])
             )
             residue_z = np.concatenate(repeat_df["residue_z"].to_numpy())
-            rho, p = function_utils.xcorr_p(residue_z.T, n_perm=params["n_perm"], rng=np.random.default_rng(params["seed"]))
+            rho, p = function_utils.xcorr_p(
+                residue_z.T,
+                n_perm=params["n_perm"],
+                rng=np.random.default_rng(params["seed"]),
+            )
             rho, p = squareform(rho, checks=False), squareform(p, checks=False)
             return unit_df, rho, p
+
 
 @schema
 class NoiseCorr(djp.Computed):
