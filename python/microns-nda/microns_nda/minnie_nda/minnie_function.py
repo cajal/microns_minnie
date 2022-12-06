@@ -931,6 +931,34 @@ class DynamicModel(minnie_function.DynamicModel):
     ):
         pass
 
+    class NnsV10ScanV3UniqueUnitReadoutLoc(
+        minnie_function.DynamicModel.NnsV10ScanV3UniqueUnitReadoutLoc
+    ):
+        @classmethod
+        def fill(cls, display_progress=True):
+            scan3_perspective = dj.FreeTable(
+                dj.conn(), "`dv_nns_v10_scan`.`__perspective__unit`"
+            ).proj(..., scan_session="session")
+            scan3_unique_neuron = dj.FreeTable(
+                dj.conn(), "`dv_scans_v3_scan`.`__unique__neuron`"
+            ).proj(..., scan_session="session")
+            scan3_unique_unit = dj.FreeTable(
+                dj.conn(), "`dv_scans_v3_scan`.`__unique__unit`"
+            ).proj(..., scan_session="session")
+            keys = ((DynamicModel.NnsV10ScanV3Unique & scan3_perspective) - cls).fetch("KEY")
+            for k in tqdm(keys, disable=not display_progress):
+                rel = scan3_perspective & k
+                rel = (
+                    rel.proj(
+                        ...,
+                        unique_unit_id="unit_id",
+                    )
+                    * scan3_unique_neuron.proj(unique_unit_id="unit_id")
+                    * scan3_unique_unit
+                    * (DynamicModel.NnsV10ScanV3Unique & k)
+                )
+                cls.insert(rel, ignore_extra_fields=True)
+
     class NnsV10ScanV3All(minnie_function.DynamicModel.NnsV10ScanV3All, VMMixin):
         virtual_module_dict = {
             "dv_nns_v10_scan": "dv_nns_v10_scan",
