@@ -854,12 +854,11 @@ class DynamicModel(djp.Lookup, MakerMixin):
             return DynamicModel.NnsV10ScanV3UniqueUnitReadout & self & part_key
 
         def readout_location(self, part_key=None):
-            scan3_perspective = dj.FreeTable(
-                dj.conn(), "`dv_nns_v10_scan`.`__perspective__unit`"
-            ).proj(..., scan_session="session")
-            rel = scan3_perspective & self
+            rel = DynamicModel.NnsV10ScanV3UniqueUnitReadoutLoc & self
             rel = rel.proj(
-                ..., stimulus_x="stimulus_x * 1960", stimulus_y="stimulus_y * 1080"
+                ...,
+                stimulus_x="stimulus_x * 1960",
+                stimulus_y="stimulus_y * 1080",
             )
             return rel
 
@@ -872,6 +871,18 @@ class DynamicModel(djp.Lookup, MakerMixin):
         ro_x                 : float                        # readout x coordinate
         ro_y                 : float                        # readout y coordinate
         ro_weight            : longblob                     # readout weight, [head, feature]
+        """
+    
+    class NnsV10ScanV3UniqueUnitReadoutLoc(djp.Part):
+        definition = """
+        # readout location saved in `dv_nns_v10_scan`.`__perspective__unit`
+        -> DynamicModel.NnsV10ScanV3Unique
+        -> minnie_nda.UnitSource
+        ---
+        stimulus_x=NULL           : float                        # stimulus x coordinate
+        stimulus_y=NULL           : float                        # stimulus y coordinate
+        polar                     : float                        # polar angle (radians)
+        azimuthal                 : float                        # azimuthal angle (radians)
         """
 
     class NnsV10ScanV3All(djp.Part):
