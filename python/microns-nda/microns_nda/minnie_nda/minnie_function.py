@@ -1233,13 +1233,81 @@ class DynamicModelScore(minnie_function.DynamicModelScore):
     ):
         pass
 
+
+    class Nns10Scan3AllCc(
+        minnie_function.DynamicModelScore.Nns10Scan3AllCc, VMMixin
+    ):
+        virtual_module_dict = {
+            "dv_nns_v10_scan": "dv_nns_v10_scan",
+            "dv_scans_v3_scan_dataset": "dv_scans_v3_scan_dataset",
+            "dv_scans_v3_scan": "dv_scans_v3_scan",
+            "dv_nns_v10_model": "dv_nns_v10_model",
+        }
+
+        @classmethod
+        def fill(cls, key=None):
+            model_maker = (
+                DynamicModel & "dynamic_model_type='NnsV10ScanV3All'"
+            ).maker()
+            model_maker = model_maker if key is None else (model_maker & key)
+            cls.spawn_virtual_modules(cls.virtual_module_dict)
+            scan_keys = (
+                (
+                    cls.virtual_modules["dv_nns_v10_scan"].ModelScore
+                    * cls.virtual_modules["dv_nns_v10_model"].BehaviorConfig.Scan
+                ).proj(..., scan_session="session")
+                * model_maker
+                - cls.proj()
+            ).fetch(as_dict=True)
+            if len(scan_keys) == 0:
+                return
+            print(f"Inserting {len(scan_keys)} scan keys:")
+            for scan_key in scan_keys:
+                print(scan_keys)
+            if input("Proceed? [y/n]") != "y":
+                return
+            for scan_key in tqdm(scan_keys):
+                with dj.conn().transaction:
+                    cls.insert1(
+                        scan_key,
+                        insert_to_master=True,
+                        constant_attrs={"dynamic_score_type": cls.__name__},
+                        ignore_extra_fields=True,
+                    )
+                    unit_keys = (
+                        (
+                            (
+                                cls.virtual_modules[
+                                    "dv_nns_v10_scan"
+                                ].ModelScore.Unit
+                                * cls.virtual_modules[
+                                    "dv_nns_v10_model"
+                                ].BehaviorConfig.Scan
+                            ).proj(..., scan_session="session")
+                            * model_maker
+                            & scan_key
+                        )
+                        .fetch(format="frame")
+                        .reset_index()
+                    )
+                    unit_keys["dynamic_score_type"] = cls.__name__
+                    unit_keys = cls.add_hash_to_rows(unit_keys)
+                    DynamicModelScore.Nns10Scan3AllCcUnitScore.insert(
+                        unit_keys,
+                        ignore_extra_fields=True,
+                    )
+
+    class Nns10Scan3AllCcUnitScore(
+        minnie_function.DynamicModelScore.Nns10Scan3AllCcUnitScore
+    ):
+        pass
+
     @classmethod
     def fill(cls):
         for p in cls.parts(as_cls=True):
             if hasattr(p, "fill"):
                 print(f"Checking {p.__name__}:")
                 p.fill()
-
 
 class DynamicModelScanSet(minnie_function.DynamicModelScanSet):
     class Member(minnie_function.DynamicModelScanSet.Member):

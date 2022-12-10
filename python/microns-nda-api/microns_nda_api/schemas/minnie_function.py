@@ -1051,6 +1051,42 @@ class DynamicModelScore(djp.Lookup, MakerMixin):
         ---
         model_score            : float                        # model score
         """
+    
+    class Nns10Scan3AllCc(djp.Part):
+        definition = """
+        # Predictive model performance and parameters
+        -> master
+        ---
+        score_hash             : varchar(256)                 # unique identifier for score configuration
+        transform_hash         : varchar(256)                 # unique identifier for transform configuration
+        trial_group_hash       : varchar(256)                 # policy for defining groups of stimulus slices
+        behavior_hash          : varchar(256)                 # nn behavior configuration
+        eye_position           : bool                         # use eye position data
+        behavior               : bool                         # use behavioral data
+        """
+        enable_hashing = True
+        hash_name = "dynamic_score_hash"
+        hashed_attrs = [
+            "score_hash",
+            "transform_hash",
+            "trial_group_hash",
+            "behavior_hash",
+            "dynamic_score_type",
+        ]
+
+        def unit_score(self, part_key=None):
+            part_key = {} if part_key is None else part_key
+            return (
+                (DynamicModelScore.Nns10Scan3AllCcUnitScore * self) & part_key
+            ).proj(..., statistic="model_score")
+
+    class Nns10Scan3AllCcUnitScore(djp.Part):
+        definition = """
+        -> DynamicModelScore.Nns10Scan3AllCc
+        -> minnie_nda.UnitSource
+        ---
+        model_score            : float                        # model score
+        """
 
 
 @schema
