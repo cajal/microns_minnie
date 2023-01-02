@@ -7,7 +7,6 @@ config.register_externals()
 config.register_adapters(context=locals())
 
 schema = dj.schema(config.schema_name, create_schema=True)
-schema.connection.dependencies.load()
 
 @schema
 class Animal(djp.Lookup):
