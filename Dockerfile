@@ -1,4 +1,4 @@
-FROM at-docker.ad.bcm.edu:5000/microns-base
+FROM at-docker:5000/microns-base:cuda11.8.0-python3.8
 LABEL mantainer="Zhuokun Ding <zhuokund@bcm.edu>, Stelios Papadopoulos <spapadop@bcm.edu>"
 
 # copy this project and install
